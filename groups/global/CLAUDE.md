@@ -47,15 +47,21 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
 
-## Message Formatting
+## Message Formatting — CRITICAL
 
-Use Slack mrkdwn format. NEVER use standard Markdown.
-- *bold* (single asterisks, NEVER **double asterisks**)
+ALWAYS use Slack mrkdwn format. NEVER use standard Markdown. This is the most important formatting rule — violating it produces broken output in Slack.
+
+Slack mrkdwn rules:
+- *bold* (single asterisks ONLY — NEVER **double asterisks**)
 - _italic_ (underscores)
 - ~strikethrough~ (tildes)
 - `inline code` and ```code blocks```
-- <https://url.com|display text> for links (NEVER [text](url))
-- - or 1. for lists (no nesting)
+- <https://url.com|display text> for links (NEVER use [text](url) markdown links)
+- Flat lists only with - or 1. (no nested lists)
 - > for blockquotes
 
-No ## headings. No [links](url). No **double stars**.
+FORBIDDEN (these break in Slack):
+- **double asterisks** — use *single* instead
+- ## headings — just use *bold text* on its own line
+- [text](url) links — use <url|text> instead
+- Nested bullet lists — keep lists flat
