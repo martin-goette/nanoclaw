@@ -9,7 +9,7 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
-import { startCredentialProxy } from './credential-proxy.js';
+import { ensureValidOAuthCredentials, startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -477,9 +477,26 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  // Proactively refresh OAuth token every 6 hours so it never expires —
+  // keeps both container agents and host CLI (ssh sessions) authenticated.
+  const OAUTH_REFRESH_INTERVAL = 6 * 60 * 60 * 1000;
+  const oauthRefreshTimer = setInterval(async () => {
+    logger.info('Periodic OAuth token refresh check');
+    try {
+      const creds = await ensureValidOAuthCredentials();
+      if (creds) {
+        const expiresIn = Math.round((creds.expiresAt - Date.now()) / 1000 / 60);
+        logger.info({ expiresIn }, 'OAuth token valid (expires in minutes)');
+      }
+    } catch (err) {
+      logger.error({ err }, 'Periodic OAuth refresh failed');
+    }
+  }, OAUTH_REFRESH_INTERVAL);
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    clearInterval(oauthRefreshTimer);
     proxyServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();

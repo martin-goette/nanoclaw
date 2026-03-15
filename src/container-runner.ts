@@ -25,7 +25,7 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { detectAuthMode } from './credential-proxy.js';
+import { copyFreshCredentials, detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -163,6 +163,44 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // OAuth credentials are staged in data/credentials/<group>/ by the host process
+  // (with token refresh if needed) then bind-mounted read-only into the container.
+  // This overlays the session dir mount above, giving the container a fresh token
+  // without writing into potentially root-owned session directories.
+  const credStagingPath = path.join(DATA_DIR, 'credentials', group.folder, '.credentials.json');
+  if (fs.existsSync(credStagingPath)) {
+    mounts.push({
+      hostPath: credStagingPath,
+      containerPath: '/home/node/.claude/.credentials.json',
+      readonly: true,
+    });
+  }
+  const hostClaudeJson = path.join(
+    process.env.HOME || '/home/node',
+    '.claude.json',
+  );
+  if (fs.existsSync(hostClaudeJson)) {
+    mounts.push({
+      hostPath: hostClaudeJson,
+      containerPath: '/home/node/.claude.json',
+      readonly: false,
+    });
+  }
+
+  // Mount user directories for persistent research output, inputs, and workspaces
+  const homeDir = process.env.HOME || '/home/node';
+  const userMounts: VolumeMount[] = [
+    { hostPath: path.join(homeDir, 'notes'), containerPath: '/home/node/notes', readonly: false },
+    { hostPath: path.join(homeDir, 'inputs'), containerPath: '/home/node/inputs', readonly: true },
+    { hostPath: path.join(homeDir, 'workspaces'), containerPath: '/home/node/workspaces', readonly: false },
+    { hostPath: path.join(homeDir, 'projects'), containerPath: '/home/node/projects', readonly: false },
+  ];
+  for (const um of userMounts) {
+    if (fs.existsSync(um.hostPath)) {
+      mounts.push(um);
+    }
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -221,21 +259,34 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+  // Check if Max subscription credentials are mounted into the container.
+  // When present, the Claude CLI uses them directly — no proxy needed.
+  const homeDir = process.env.HOME || '/home/node';
+  const hasOAuthCredentials = fs.existsSync(
+    path.join(homeDir, '.claude', '.credentials.json'),
   );
 
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  if (hasOAuthCredentials) {
+    // Max subscription mode: Claude CLI uses mounted OAuth credentials directly.
+    // Do NOT set ANTHROPIC_BASE_URL or ANTHROPIC_API_KEY — they would conflict
+    // with the OAuth flow that needs to reach Anthropic's real endpoints.
   } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    // Route API traffic through the credential proxy (containers never see real secrets)
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
+
+    // Mirror the host's auth method with a placeholder value.
+    // API key mode: SDK sends x-api-key, proxy replaces with real key.
+    // OAuth mode:   SDK exchanges placeholder token for temp API key,
+    //               proxy injects real OAuth token on that exchange request.
+    const authMode = detectAuthMode();
+    if (authMode === 'api-key') {
+      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    } else {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    }
   }
 
   // Runtime-specific args for host gateway resolution
@@ -274,6 +325,19 @@ export async function runContainerAgent(
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
+
+  // Ensure OAuth credentials are valid and copy into a host-owned staging path.
+  // This is then bind-mounted over /home/node/.claude/.credentials.json inside
+  // the container. We avoid writing into the session dir directly because
+  // previous container runs may have created root-owned files there.
+  const credStagingDir = path.join(DATA_DIR, 'credentials', group.folder);
+  fs.mkdirSync(credStagingDir, { recursive: true });
+  const stagedCredPath = path.join(credStagingDir, '.credentials.json');
+  try {
+    await copyFreshCredentials(stagedCredPath);
+  } catch (err) {
+    logger.warn({ err, group: group.name }, 'Failed to refresh OAuth credentials, using existing');
+  }
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
