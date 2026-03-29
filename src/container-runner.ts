@@ -25,7 +25,7 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { detectAuthMode } from './credential-proxy.js';
+import { copyFreshCredentials, detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -199,6 +199,23 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // OAuth credentials are staged in data/credentials/<group>/ by the host process
+  // (with token refresh if needed) then bind-mounted read-only into the container.
+  // This overlays the session dir mount above, giving the container a fresh token.
+  const credStagingPath = path.join(
+    DATA_DIR,
+    'credentials',
+    group.folder,
+    '.credentials.json',
+  );
+  if (fs.existsSync(credStagingPath)) {
+    mounts.push({
+      hostPath: credStagingPath,
+      containerPath: '/home/node/.claude/.credentials.json',
+      readonly: true,
+    });
+  }
+
   const hostClaudeJson = path.join(
     process.env.HOME || '/home/node',
     '.claude.json',
@@ -323,21 +340,16 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
-
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
+  // Auth injection depends on mode:
+  // API key mode: route through credential proxy which injects the real key.
+  // OAuth mode:   mount credentials file directly; SDK handles auth natively.
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-  } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
   // Runtime-specific args for host gateway resolution
@@ -376,6 +388,24 @@ export async function runContainerAgent(
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
+
+  // Stage fresh OAuth credentials before building mounts (so the file exists for the mount check)
+  const stagedCredPath = path.join(
+    DATA_DIR,
+    'credentials',
+    group.folder,
+    '.credentials.json',
+  );
+  if (detectAuthMode() === 'oauth') {
+    try {
+      await copyFreshCredentials(stagedCredPath);
+    } catch (err) {
+      logger.error(
+        { err, group: group.name },
+        'Failed to stage OAuth credentials — container will have no credentials mount',
+      );
+    }
+  }
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');

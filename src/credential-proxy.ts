@@ -44,6 +44,15 @@ export function readCredentials(credentialsPath: string): OAuthCredentials {
       'credentials file missing claudeAiOauth — run "claude" to authenticate',
     );
   }
+  if (
+    !oauth.accessToken ||
+    !oauth.refreshToken ||
+    typeof oauth.expiresAt !== 'number'
+  ) {
+    throw new Error(
+      'credentials file has incomplete claudeAiOauth fields (need accessToken, refreshToken, expiresAt)',
+    );
+  }
   return {
     accessToken: oauth.accessToken,
     refreshToken: oauth.refreshToken,
@@ -90,7 +99,11 @@ export async function refreshOAuthToken(
             return;
           }
           const json = JSON.parse(Buffer.concat(chunks).toString());
-          if (!json.access_token || typeof json.expires_in !== 'number') {
+          if (
+            !json.access_token ||
+            !json.refresh_token ||
+            typeof json.expires_in !== 'number'
+          ) {
             reject(new Error('OAuth refresh response missing required fields'));
             return;
           }
@@ -108,6 +121,9 @@ export async function refreshOAuthToken(
   });
 }
 
+// Serialize concurrent refresh attempts (refresh tokens are single-use)
+let refreshInProgress: Promise<OAuthCredentials> | null = null;
+
 export async function ensureValidToken(
   credentialsPath: string,
   tokenUrl = REFRESH_URL,
@@ -120,39 +136,60 @@ export async function ensureValidToken(
     return creds;
   }
 
-  logger.info('OAuth token expiring soon, refreshing...');
-
-  let lastError: Error | undefined;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const refreshed = await refreshOAuthToken(creds.refreshToken, tokenUrl);
-
-      // Write back to credentials file, preserving other fields
-      const raw = JSON.parse(fs.readFileSync(credentialsPath, 'utf-8'));
-      raw.claudeAiOauth = {
-        ...raw.claudeAiOauth,
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-        expiresAt: refreshed.expiresAt,
-      };
-      fs.writeFileSync(credentialsPath, JSON.stringify(raw, null, 2));
-
-      logger.info('OAuth token refreshed successfully');
-      return refreshed;
-    } catch (err) {
-      lastError = err as Error;
-      logger.warn({ err, attempt, maxRetries }, 'OAuth refresh attempt failed');
-      if (attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-    }
+  // If another call is already refreshing, wait for it
+  if (refreshInProgress) {
+    return refreshInProgress;
   }
 
-  logger.error(
-    { err: lastError },
-    'All OAuth refresh attempts failed, using current token',
-  );
-  return creds;
+  logger.info('OAuth token expiring soon, refreshing...');
+
+  refreshInProgress = (async () => {
+    let lastError: Error | undefined;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const refreshed = await refreshOAuthToken(
+          creds.refreshToken,
+          tokenUrl,
+        );
+
+        // Write back to credentials file, preserving other fields
+        const raw = JSON.parse(fs.readFileSync(credentialsPath, 'utf-8'));
+        raw.claudeAiOauth = {
+          ...raw.claudeAiOauth,
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          expiresAt: refreshed.expiresAt,
+        };
+        fs.writeFileSync(credentialsPath, JSON.stringify(raw, null, 2), {
+          mode: 0o600,
+        });
+
+        logger.info('OAuth token refreshed successfully');
+        return refreshed;
+      } catch (err) {
+        lastError = err as Error;
+        logger.warn(
+          { err, attempt, maxRetries },
+          'OAuth refresh attempt failed',
+        );
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+    }
+
+    logger.error(
+      { err: lastError },
+      'All OAuth refresh attempts failed, using current token',
+    );
+    return creds;
+  })();
+
+  try {
+    return await refreshInProgress;
+  } finally {
+    refreshInProgress = null;
+  }
 }
 
 export type AuthMode = 'api-key' | 'oauth';
@@ -279,4 +316,24 @@ export async function startCredentialProxy(
 export function detectAuthMode(): AuthMode {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
   return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+}
+
+/**
+ * Copy fresh OAuth credentials to a staging path for container use.
+ * Ensures the token is refreshed before copying.
+ * Returns true if credentials were staged, false if not in OAuth mode.
+ */
+export async function copyFreshCredentials(
+  targetPath: string,
+  credentialsPath = defaultCredentialsPath(),
+): Promise<boolean> {
+  const creds = await ensureValidToken(credentialsPath);
+
+  const dir = path.dirname(targetPath);
+  fs.mkdirSync(dir, { recursive: true });
+
+  // Read the full credentials file to preserve all fields
+  const raw = JSON.parse(fs.readFileSync(credentialsPath, 'utf-8'));
+  fs.writeFileSync(targetPath, JSON.stringify(raw, null, 2), { mode: 0o600 });
+  return true;
 }
