@@ -9,29 +9,39 @@ When the user says **"serve as file"**, **"share as file"**, **"make a link"**, 
 
 ## How it works
 
-1. Save the file to `/workspace/shared-files/` with a descriptive filename
-2. The file becomes accessible at `https://code.goette.co/files/<group>/<filename>`
-3. Reply with the full URL so the user can click it
-
-**The `<group>` name** is the name of the directory at `/workspace/group/`. To find it:
+**Step 1 — Resolve the group name (do this FIRST, every time):**
 
 ```bash
-basename $(readlink -f /workspace/group)
+GROUP_NAME=$(basename $(readlink -f /workspace/group))
+echo "Group: $GROUP_NAME"
 ```
+
+This returns the actual folder name (e.g. `slack_main`, `slack_project-forge`). **Never use the literal word "group" in the URL.**
+
+**Step 2 — Save the file:**
+
+```bash
+cat > /workspace/shared-files/myfile.py << 'EOF'
+# content here
+EOF
+```
+
+**Step 3 — Reply with the URL using the resolved group name:**
+
+The URL pattern is: `https://code.goette.co/files/${GROUP_NAME}/<filename>`
 
 ## Example
 
-If the user asks you to write a script then says "serve as file":
-
 ```bash
-# Save it
+GROUP_NAME=$(basename $(readlink -f /workspace/group))
 cat > /workspace/shared-files/script.py << 'PYEOF'
-# ... the script content ...
+print("hello")
 PYEOF
+echo "https://code.goette.co/files/${GROUP_NAME}/script.py"
 ```
 
-Then reply:
-> Here's your file: https://code.goette.co/files/my-group/script.py
+Then reply with the echoed URL, e.g.:
+> Here's your file: https://code.goette.co/files/slack_project-forge/script.py
 
 ## Guidelines
 - Pick a descriptive filename with the right extension (`.py`, `.csv`, `.html`, `.md`, `.json`, etc.)
