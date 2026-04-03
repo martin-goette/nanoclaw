@@ -10,6 +10,10 @@ vi.mock('./env.js', () => ({
   readEnvFile: vi.fn(() => ({ ...mockEnv })),
 }));
 
+vi.mock('./config.js', () => ({
+  DATA_DIR: '/tmp/nanoclaw-test-data',
+}));
+
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }));

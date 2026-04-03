@@ -18,6 +18,7 @@ import path from 'path';
 import os from 'os';
 
 import { readEnvFile } from './env.js';
+import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 
 const REFRESH_URL = 'https://platform.claude.com/v1/oauth/token';
@@ -41,48 +42,9 @@ export class OAuthRefreshError extends Error {
   }
 }
 
-/** Path to the user's CLI credentials (read-only, used to bootstrap). */
-export function cliCredentialsPath(): string {
+/** Path to the shared CLI/NanoClaw credentials file. */
+export function credentialsPath(): string {
   return path.join(os.homedir(), '.claude', '.credentials.json');
-}
-
-/** Path to NanoClaw's own credentials (independent session). */
-export function defaultCredentialsPath(): string {
-  return path.join(os.homedir(), '.claude', '.credentials.nanoclaw.json');
-}
-
-/**
- * Bootstrap NanoClaw's credentials from the CLI's credentials file.
- * Only copies if NanoClaw's file doesn't exist or has expired tokens.
- * After bootstrap, NanoClaw maintains its own independent refresh chain.
- */
-export function bootstrapCredentials(
-  nanoclawPath = defaultCredentialsPath(),
-  cliPath = cliCredentialsPath(),
-): void {
-  // If NanoClaw already has valid credentials, nothing to do
-  try {
-    const creds = readCredentials(nanoclawPath);
-    if (creds.expiresAt - Date.now() > REFRESH_BUFFER_MS) {
-      return;
-    }
-  } catch {
-    // File doesn't exist or is invalid — need to bootstrap
-  }
-
-  // Copy from CLI credentials
-  if (!fs.existsSync(cliPath)) {
-    throw new Error(
-      'No CLI credentials found — run `claude` to authenticate first',
-    );
-  }
-  const raw = fs.readFileSync(cliPath, 'utf-8');
-  // Validate before copying
-  readCredentials(cliPath);
-  const dir = path.dirname(nanoclawPath);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(nanoclawPath, raw, { mode: 0o600 });
-  logger.info('Bootstrapped NanoClaw credentials from CLI session');
 }
 
 export function readCredentials(credentialsPath: string): OAuthCredentials {
@@ -149,7 +111,9 @@ export async function refreshOAuthToken(
               let code = 'unknown';
               try {
                 code = JSON.parse(responseBody).error || code;
-              } catch { /* use default */ }
+              } catch {
+                /* use default */
+              }
               reject(
                 new OAuthRefreshError(
                   `OAuth refresh failed (${res.statusCode}): ${responseBody}`,
@@ -308,20 +272,45 @@ export async function ensureValidToken(
 }
 
 // Refresh when token has < 3 hours remaining (~halfway through the ~8h lifetime).
-// This keeps the refresh token chain alive without racing the CLI every 4 minutes.
 const PROACTIVE_BUFFER_MS = 3 * 60 * 60 * 1000;
 
 /**
- * Proactive refresh — refreshes the token well before expiry to keep the
- * refresh token chain alive. Without this, the CLI can consume the single-use
- * refresh token during the ~8-hour access token lifetime, leaving NanoClaw
- * with a dead refresh token when the access token finally expires.
+ * Proactive refresh — refreshes the token well before expiry so the agent
+ * doesn't hit an expired token mid-conversation.
  */
 export async function proactiveRefresh(
   credentialsPath: string,
   tokenUrl = REFRESH_URL,
 ): Promise<OAuthCredentials> {
   return ensureValidToken(credentialsPath, tokenUrl, 3, PROACTIVE_BUFFER_MS);
+}
+
+/**
+ * Update all staged container credential files with the latest token.
+ * Called after proactive refresh so running containers don't hold stale tokens.
+ */
+function updateStagedCredentials(credentialsPath: string): void {
+  const credDir = path.join(DATA_DIR, 'credentials');
+  let groups: string[];
+  try {
+    groups = fs.readdirSync(credDir);
+  } catch {
+    return; // no credentials dir yet
+  }
+  const source = fs.readFileSync(credentialsPath, 'utf-8');
+  for (const group of groups) {
+    const staged = path.join(credDir, group, '.credentials.json');
+    try {
+      if (fs.existsSync(staged)) {
+        const tmpPath = staged + '.tmp';
+        fs.writeFileSync(tmpPath, source, { mode: 0o600 });
+        fs.renameSync(tmpPath, staged);
+      }
+    } catch (err) {
+      logger.warn({ err, group }, 'Failed to update staged credentials');
+    }
+  }
+  logger.info({ count: groups.length }, 'Updated staged container credentials');
 }
 
 export type AuthMode = 'api-key' | 'oauth';
@@ -333,18 +322,16 @@ export interface ProxyConfig {
 export async function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
-  credentialsPath = defaultCredentialsPath(),
+  credsPath = credentialsPath(),
   onAuthFailure?: (message: string) => void,
 ): Promise<Server> {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL']);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
 
-  // For OAuth mode, bootstrap NanoClaw's own credentials then validate
   let currentToken: string | undefined;
   if (authMode === 'oauth') {
-    bootstrapCredentials(credentialsPath);
-    const creds = await ensureValidToken(credentialsPath);
+    const creds = await ensureValidToken(credsPath);
     currentToken = creds.accessToken;
   }
 
@@ -358,15 +345,17 @@ export async function startCredentialProxy(
   if (authMode === 'oauth') {
     let authDead = false;
     const refreshInterval = async () => {
-      // If auth was dead, check if user re-logged in via CLI
+      // If auth was dead, check if user re-logged in via CLI.
+      // Since we share the credentials file, a fresh CLI login
+      // is immediately visible — no bootstrap/copy needed.
       if (authDead) {
         try {
-          bootstrapCredentials(credentialsPath);
-          const creds = readCredentials(credentialsPath);
+          const creds = readCredentials(credsPath);
           if (creds.expiresAt - Date.now() > RECOVERY_FRESHNESS_MS) {
             authDead = false;
             currentToken = creds.accessToken;
-            logger.info('OAuth credentials recovered from CLI after re-login');
+            updateStagedCredentials(credsPath);
+            logger.info('OAuth credentials recovered after re-login');
             return;
           }
         } catch {
@@ -375,8 +364,9 @@ export async function startCredentialProxy(
         return;
       }
       try {
-        const refreshed = await proactiveRefresh(credentialsPath);
+        const refreshed = await proactiveRefresh(credsPath);
         currentToken = refreshed.accessToken;
+        updateStagedCredentials(credsPath);
       } catch (err) {
         const msg = (err as Error).message;
         logger.error(
@@ -394,7 +384,7 @@ export async function startCredentialProxy(
           );
           if (onAuthFailure) {
             onAuthFailure(
-              '⚠️ OAuth session expired — I can\'t process messages until you re-login. Run `claude` on the host to fix this.',
+              "⚠️ OAuth session expired — I can't process messages until you re-login. Run `claude` on the host to fix this.",
             );
           }
         }
@@ -495,15 +485,15 @@ export function detectAuthMode(): AuthMode {
  */
 export async function copyFreshCredentials(
   targetPath: string,
-  credentialsPath = defaultCredentialsPath(),
+  credsPath = credentialsPath(),
 ): Promise<boolean> {
-  const creds = await ensureValidToken(credentialsPath);
+  const creds = await ensureValidToken(credsPath);
 
   const dir = path.dirname(targetPath);
   fs.mkdirSync(dir, { recursive: true });
 
   // Read the full credentials file to preserve all fields
-  const raw = JSON.parse(fs.readFileSync(credentialsPath, 'utf-8'));
+  const raw = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
   fs.writeFileSync(targetPath, JSON.stringify(raw, null, 2), { mode: 0o600 });
   return true;
 }
