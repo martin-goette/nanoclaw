@@ -10,9 +10,14 @@ const TRANSCRIPTION_MODEL = env.TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
 
 let client: OpenAI | null = null;
 
+let warnedMissingKey = false;
+
 function getClient(): OpenAI | null {
   if (!OPENAI_API_KEY) {
-    logger.warn('OPENAI_API_KEY not set — audio transcription disabled');
+    if (!warnedMissingKey) {
+      logger.warn('OPENAI_API_KEY not set — audio transcription disabled');
+      warnedMissingKey = true;
+    }
     return null;
   }
   if (!client) {
@@ -33,7 +38,17 @@ export async function transcribeAudio(
   if (!openai) return null;
 
   try {
-    const file = new File([audioBuffer], filename, { type: 'audio/mp4' });
+    const ext = filename.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      m4a: 'audio/mp4',
+      mp3: 'audio/mpeg',
+      ogg: 'audio/ogg',
+      opus: 'audio/opus',
+      wav: 'audio/wav',
+      webm: 'audio/webm',
+    };
+    const mimeType = mimeTypes[ext || ''] || 'audio/mp4';
+    const file = new File([audioBuffer], filename, { type: mimeType });
 
     const response = await openai.audio.transcriptions.create({
       model: TRANSCRIPTION_MODEL,
