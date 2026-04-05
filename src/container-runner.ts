@@ -28,11 +28,34 @@ import {
 } from './container-runtime.js';
 import { copyFreshCredentials, detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { readEnvFile } from './env.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+
+/**
+ * Read .mcp.json from the project root and return its mcpServers map.
+ * Returns an empty object if the file is missing or malformed.
+ */
+function readMcpJson(): Record<
+  string,
+  { command: string; args?: string[]; env?: Record<string, string> }
+> {
+  const mcpJsonPath = path.join(process.cwd(), '.mcp.json');
+  try {
+    if (!fs.existsSync(mcpJsonPath)) return {};
+    const raw = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'));
+    return raw.mcpServers || {};
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Failed to read .mcp.json — skipping global MCP servers',
+    );
+    return {};
+  }
+}
 
 export interface ContainerInput {
   prompt: string;
@@ -43,6 +66,10 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  mcpServers?: Record<
+    string,
+    { command: string; args?: string[]; env?: Record<string, string> }
+  >;
 }
 
 export interface ContainerOutput {
@@ -345,6 +372,7 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  mcpEnvVars?: Record<string, string>,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -381,6 +409,13 @@ function buildContainerArgs(
       args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
     } else {
       args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+    }
+  }
+
+  // Pass MCP server env vars (resolved from .env) into the container
+  if (mcpEnvVars) {
+    for (const [key, value] of Object.entries(mcpEnvVars)) {
+      args.push('-e', `${key}=${value}`);
     }
   }
 
@@ -421,7 +456,49 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+
+  // Merge global (.mcp.json) and per-group MCP servers.
+  // Per-group servers override globals on name collision.
+  const globalMcpServers = readMcpJson();
+  const groupMcpServers = group.containerConfig?.mcpServers || {};
+  const mergedMcpServers = { ...globalMcpServers, ...groupMcpServers };
+  const hasMcpServers = Object.keys(mergedMcpServers).length > 0;
+
+  // Resolve MCP server env vars from .env and pass them into the container.
+  // Config env values may use ${VAR} syntax; resolve to actual values from .env.
+  let mcpEnvVars: Record<string, string> | undefined;
+  let resolvedServers = mergedMcpServers;
+  if (hasMcpServers) {
+    const envKeys = new Set<string>();
+    for (const server of Object.values(mergedMcpServers)) {
+      if (!server.env) continue;
+      for (const [key, val] of Object.entries(server.env)) {
+        envKeys.add(key);
+        const match = val.match(/^\$\{(\w+)\}$/);
+        if (match) envKeys.add(match[1]);
+      }
+    }
+
+    const resolved = envKeys.size > 0 ? readEnvFile([...envKeys]) : {};
+    mcpEnvVars = {};
+
+    const built: typeof mergedMcpServers = {};
+    for (const [name, server] of Object.entries(mergedMcpServers)) {
+      const resolvedEnv: Record<string, string> = {};
+      if (server.env) {
+        for (const [key, val] of Object.entries(server.env)) {
+          const match = val.match(/^\$\{(\w+)\}$/);
+          const resolvedVal = match ? resolved[match[1]] || '' : val;
+          resolvedEnv[key] = resolvedVal;
+          if (resolvedVal) mcpEnvVars![key] = resolvedVal;
+        }
+      }
+      built[name] = { ...server, env: resolvedEnv };
+    }
+    resolvedServers = built;
+  }
+
+  const containerArgs = buildContainerArgs(mounts, containerName, mcpEnvVars);
 
   logger.debug(
     {
@@ -461,7 +538,12 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    container.stdin.write(JSON.stringify(input));
+    const containerInput: ContainerInput = {
+      ...input,
+      ...(hasMcpServers ? { mcpServers: resolvedServers } : {}),
+    };
+
+    container.stdin.write(JSON.stringify(containerInput));
     container.stdin.end();
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive

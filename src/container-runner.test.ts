@@ -66,6 +66,21 @@ vi.mock('./credential-proxy.js', () => ({
   detectAuthMode: vi.fn(() => 'api-key'),
 }));
 
+// Mock env (readEnvFile)
+vi.mock('./env.js', () => ({
+  readEnvFile: vi.fn((keys: string[]) => {
+    // Return realistic resolved values for known test keys
+    const envMap: Record<string, string> = {
+      PERPLEXITY_API_KEY: 'resolved-perplexity-key-123',
+    };
+    const result: Record<string, string> = {};
+    for (const k of keys) {
+      if (envMap[k]) result[k] = envMap[k];
+    }
+    return result;
+  }),
+}));
+
 // Create a controllable fake ChildProcess
 function createFakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -345,7 +360,7 @@ describe('container-runner .mcp.json merge', () => {
     expect(containerInput.mcpServers.perplexity).toEqual({
       command: 'npx',
       args: ['-y', '@perplexity-ai/mcp-server'],
-      env: { PERPLEXITY_API_KEY: '${PERPLEXITY_API_KEY}' },
+      env: { PERPLEXITY_API_KEY: 'resolved-perplexity-key-123' },
     });
   });
 
@@ -407,17 +422,18 @@ describe('container-runner .mcp.json merge', () => {
 
     expect(containerInput.mcpServers).toBeDefined();
 
-    // Global server preserved
+    // Global server preserved — env vars resolved from .env
     expect(containerInput.mcpServers.perplexity).toEqual({
       command: 'npx',
       args: ['-y', '@perplexity-ai/mcp-server'],
-      env: { PERPLEXITY_API_KEY: '${PERPLEXITY_API_KEY}' },
+      env: { PERPLEXITY_API_KEY: 'resolved-perplexity-key-123' },
     });
 
-    // Per-group override wins
+    // Per-group override wins (env resolved to empty object when absent)
     expect(containerInput.mcpServers['shared-server']).toEqual({
       command: 'group-cmd',
       args: ['--group'],
+      env: {},
     });
   });
 });
