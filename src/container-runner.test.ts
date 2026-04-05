@@ -61,11 +61,6 @@ vi.mock('./container-runtime.js', () => ({
   stopContainer: vi.fn(),
 }));
 
-// Mock credential-proxy
-vi.mock('./credential-proxy.js', () => ({
-  detectAuthMode: vi.fn(() => 'api-key'),
-}));
-
 // Mock env (readEnvFile)
 vi.mock('./env.js', () => ({
   readEnvFile: vi.fn((keys: string[]) => {
@@ -80,6 +75,7 @@ vi.mock('./env.js', () => ({
     return result;
   }),
 }));
+
 
 // Create a controllable fake ChildProcess
 function createFakeProcess() {

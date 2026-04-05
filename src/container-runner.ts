@@ -26,7 +26,7 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { copyFreshCredentials, detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { readEnvFile } from './env.js';
 import { RegisteredGroup } from './types.js';
@@ -95,7 +95,7 @@ function buildVolumeMounts(
 
   if (isMain) {
     // Main gets the project root read-only. Writable paths the agent needs
-    // (group folder, IPC, .claude/) are mounted separately below.
+    // (store, group folder, IPC, .claude/) are mounted separately below.
     // Read-only prevents the agent from modifying host application code
     // (src/, dist/, package.json, etc.) which would bypass the sandbox
     // entirely on next restart.
@@ -115,6 +115,15 @@ function buildVolumeMounts(
         readonly: true,
       });
     }
+
+    // Main gets writable access to the store (SQLite DB) so it can
+    // query and write to the database directly.
+    const storeDir = path.join(projectRoot, 'store');
+    mounts.push({
+      hostPath: storeDir,
+      containerPath: '/workspace/project/store',
+      readonly: false,
+    });
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -226,23 +235,6 @@ function buildVolumeMounts(
     containerPath: '/home/node/.claude',
     readonly: false,
   });
-
-  // OAuth credentials are staged in data/credentials/<group>/ by the host process
-  // (with token refresh if needed) then bind-mounted read-only into the container.
-  // This overlays the session dir mount above, giving the container a fresh token.
-  const credStagingPath = path.join(
-    DATA_DIR,
-    'credentials',
-    group.folder,
-    '.credentials.json',
-  );
-  if (fs.existsSync(credStagingPath)) {
-    mounts.push({
-      hostPath: credStagingPath,
-      containerPath: '/home/node/.claude/.credentials.json',
-      readonly: true,
-    });
-  }
 
   const hostClaudeJson = path.join(
     process.env.HOME || '/home/node',
@@ -379,17 +371,20 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Auth injection depends on mode:
-  // API key mode: route through credential proxy which injects the real key.
-  // OAuth mode:   mount credentials file directly; SDK handles auth natively.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push(
-      '-e',
-      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-    );
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  // Pass MCP server env vars (resolved from .env) into the container
+  if (mcpEnvVars) {
+    for (const [key, value] of Object.entries(mcpEnvVars)) {
+      args.push('-e', `${key}=${value}`);
+    }
   }
+
+  // Route all API calls through the credential proxy which injects the real key.
+  // Containers get a placeholder key — the proxy replaces it with the real one.
+  args.push(
+    '-e',
+    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+  );
+  args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
@@ -434,24 +429,6 @@ export async function runContainerAgent(
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
-
-  // Stage fresh OAuth credentials before building mounts (so the file exists for the mount check)
-  const stagedCredPath = path.join(
-    DATA_DIR,
-    'credentials',
-    group.folder,
-    '.credentials.json',
-  );
-  if (detectAuthMode() === 'oauth') {
-    try {
-      await copyFreshCredentials(stagedCredPath);
-    } catch (err) {
-      logger.error(
-        { err, group: group.name },
-        'Failed to stage OAuth credentials — container will have no credentials mount',
-      );
-    }
-  }
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
