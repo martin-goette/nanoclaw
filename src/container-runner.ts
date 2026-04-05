@@ -28,11 +28,34 @@ import {
 } from './container-runtime.js';
 import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { readEnvFile } from './env.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+
+/**
+ * Read .mcp.json from the project root and return its mcpServers map.
+ * Returns an empty object if the file is missing or malformed.
+ */
+function readMcpJson(): Record<
+  string,
+  { command: string; args?: string[]; env?: Record<string, string> }
+> {
+  const mcpJsonPath = path.join(process.cwd(), '.mcp.json');
+  try {
+    if (!fs.existsSync(mcpJsonPath)) return {};
+    const raw = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'));
+    return raw.mcpServers || {};
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Failed to read .mcp.json — skipping global MCP servers',
+    );
+    return {};
+  }
+}
 
 export interface ContainerInput {
   prompt: string;
@@ -384,6 +407,13 @@ function buildContainerArgs(
     }
   }
 
+  // Pass MCP server env vars (resolved from .env) into the container
+  if (mcpEnvVars) {
+    for (const [key, value] of Object.entries(mcpEnvVars)) {
+      args.push('-e', `${key}=${value}`);
+    }
+  }
+
   args.push(CONTAINER_IMAGE);
 
   return args;
@@ -404,14 +434,20 @@ export async function runContainerAgent(
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
 
+  // Merge global (.mcp.json) and per-group MCP servers.
+  // Per-group servers override globals on name collision.
+  const globalMcpServers = readMcpJson();
+  const groupMcpServers = group.containerConfig?.mcpServers || {};
+  const mergedMcpServers = { ...globalMcpServers, ...groupMcpServers };
+  const hasMcpServers = Object.keys(mergedMcpServers).length > 0;
+
   // Resolve MCP server env vars from .env and pass them into the container.
   // Config env values may use ${VAR} syntax; resolve to actual values from .env.
   let mcpEnvVars: Record<string, string> | undefined;
-  const mcpServers = group.containerConfig?.mcpServers;
-  if (mcpServers) {
-    // Collect all env var names we need to resolve
+  let resolvedServers = mergedMcpServers;
+  if (hasMcpServers) {
     const envKeys = new Set<string>();
-    for (const server of Object.values(mcpServers)) {
+    for (const server of Object.values(mergedMcpServers)) {
       if (!server.env) continue;
       for (const [key, val] of Object.entries(server.env)) {
         envKeys.add(key);
@@ -423,24 +459,20 @@ export async function runContainerAgent(
     const resolved = envKeys.size > 0 ? readEnvFile([...envKeys]) : {};
     mcpEnvVars = {};
 
-    // Build resolved MCP server configs and collect container env vars
-    const resolvedServers: typeof mcpServers = {};
-    for (const [name, server] of Object.entries(mcpServers)) {
+    const built: typeof mergedMcpServers = {};
+    for (const [name, server] of Object.entries(mergedMcpServers)) {
       const resolvedEnv: Record<string, string> = {};
       if (server.env) {
         for (const [key, val] of Object.entries(server.env)) {
           const match = val.match(/^\$\{(\w+)\}$/);
           const resolvedVal = match ? resolved[match[1]] || '' : val;
           resolvedEnv[key] = resolvedVal;
-          // Also inject into container process env so MCP server inherits it
           if (resolvedVal) mcpEnvVars![key] = resolvedVal;
         }
       }
-      resolvedServers[name] = { ...server, env: resolvedEnv };
+      built[name] = { ...server, env: resolvedEnv };
     }
-
-    // Forward resolved MCP server config to the container via ContainerInput
-    input.mcpServers = resolvedServers;
+    resolvedServers = built;
   }
 
   const containerArgs = buildContainerArgs(mounts, containerName, mcpEnvVars);
@@ -483,7 +515,12 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    container.stdin.write(JSON.stringify(input));
+    const containerInput: ContainerInput = {
+      ...input,
+      ...(hasMcpServers ? { mcpServers: resolvedServers } : {}),
+    };
+
+    container.stdin.write(JSON.stringify(containerInput));
     container.stdin.end();
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
