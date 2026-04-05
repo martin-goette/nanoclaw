@@ -27,9 +27,16 @@ export interface AllowedRoot {
   description?: string;
 }
 
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface RegisteredGroup {
