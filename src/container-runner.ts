@@ -26,7 +26,7 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { copyFreshCredentials, detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -43,6 +43,10 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  mcpServers?: Record<
+    string,
+    { command: string; args?: string[]; env?: Record<string, string> }
+  >;
 }
 
 export interface ContainerOutput {
@@ -68,7 +72,7 @@ function buildVolumeMounts(
 
   if (isMain) {
     // Main gets the project root read-only. Writable paths the agent needs
-    // (group folder, IPC, .claude/) are mounted separately below.
+    // (store, group folder, IPC, .claude/) are mounted separately below.
     // Read-only prevents the agent from modifying host application code
     // (src/, dist/, package.json, etc.) which would bypass the sandbox
     // entirely on next restart.
@@ -88,6 +92,15 @@ function buildVolumeMounts(
         readonly: true,
       });
     }
+
+    // Main gets writable access to the store (SQLite DB) so it can
+    // query and write to the database directly.
+    const storeDir = path.join(projectRoot, 'store');
+    mounts.push({
+      hostPath: storeDir,
+      containerPath: '/workspace/project/store',
+      readonly: false,
+    });
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -199,23 +212,6 @@ function buildVolumeMounts(
     containerPath: '/home/node/.claude',
     readonly: false,
   });
-
-  // OAuth credentials are staged in data/credentials/<group>/ by the host process
-  // (with token refresh if needed) then bind-mounted read-only into the container.
-  // This overlays the session dir mount above, giving the container a fresh token.
-  const credStagingPath = path.join(
-    DATA_DIR,
-    'credentials',
-    group.folder,
-    '.credentials.json',
-  );
-  if (fs.existsSync(credStagingPath)) {
-    mounts.push({
-      hostPath: credStagingPath,
-      containerPath: '/home/node/.claude/.credentials.json',
-      readonly: true,
-    });
-  }
 
   const hostClaudeJson = path.join(
     process.env.HOME || '/home/node',
@@ -345,23 +341,27 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  mcpEnvVars?: Record<string, string>,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Auth injection depends on mode:
-  // API key mode: route through credential proxy which injects the real key.
-  // OAuth mode:   mount credentials file directly; SDK handles auth natively.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push(
-      '-e',
-      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-    );
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  // Pass MCP server env vars (resolved from .env) into the container
+  if (mcpEnvVars) {
+    for (const [key, value] of Object.entries(mcpEnvVars)) {
+      args.push('-e', `${key}=${value}`);
+    }
   }
+
+  // Route all API calls through the credential proxy which injects the real key.
+  // Containers get a placeholder key — the proxy replaces it with the real one.
+  args.push(
+    '-e',
+    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+  );
+  args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
@@ -400,28 +400,50 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  // Stage fresh OAuth credentials before building mounts (so the file exists for the mount check)
-  const stagedCredPath = path.join(
-    DATA_DIR,
-    'credentials',
-    group.folder,
-    '.credentials.json',
-  );
-  if (detectAuthMode() === 'oauth') {
-    try {
-      await copyFreshCredentials(stagedCredPath);
-    } catch (err) {
-      logger.error(
-        { err, group: group.name },
-        'Failed to stage OAuth credentials — container will have no credentials mount',
-      );
-    }
-  }
-
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+
+  // Resolve MCP server env vars from .env and pass them into the container.
+  // Config env values may use ${VAR} syntax; resolve to actual values from .env.
+  let mcpEnvVars: Record<string, string> | undefined;
+  const mcpServers = group.containerConfig?.mcpServers;
+  if (mcpServers) {
+    // Collect all env var names we need to resolve
+    const envKeys = new Set<string>();
+    for (const server of Object.values(mcpServers)) {
+      if (!server.env) continue;
+      for (const [key, val] of Object.entries(server.env)) {
+        envKeys.add(key);
+        const match = val.match(/^\$\{(\w+)\}$/);
+        if (match) envKeys.add(match[1]);
+      }
+    }
+
+    const resolved = envKeys.size > 0 ? readEnvFile([...envKeys]) : {};
+    mcpEnvVars = {};
+
+    // Build resolved MCP server configs and collect container env vars
+    const resolvedServers: typeof mcpServers = {};
+    for (const [name, server] of Object.entries(mcpServers)) {
+      const resolvedEnv: Record<string, string> = {};
+      if (server.env) {
+        for (const [key, val] of Object.entries(server.env)) {
+          const match = val.match(/^\$\{(\w+)\}$/);
+          const resolvedVal = match ? resolved[match[1]] || '' : val;
+          resolvedEnv[key] = resolvedVal;
+          // Also inject into container process env so MCP server inherits it
+          if (resolvedVal) mcpEnvVars![key] = resolvedVal;
+        }
+      }
+      resolvedServers[name] = { ...server, env: resolvedEnv };
+    }
+
+    // Forward resolved MCP server config to the container via ContainerInput
+    input.mcpServers = resolvedServers;
+  }
+
+  const containerArgs = buildContainerArgs(mounts, containerName, mcpEnvVars);
 
   logger.debug(
     {
