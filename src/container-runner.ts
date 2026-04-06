@@ -65,6 +65,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  model?: string;
   mcpServers?: Record<
     string,
     { command: string; args?: string[]; env?: Record<string, string> }
@@ -290,6 +291,16 @@ function buildVolumeMounts(
     if (fs.existsSync(um.hostPath)) {
       mounts.push(um);
     }
+  }
+
+  // Google Workspace MCP OAuth token cache (shared across all groups)
+  const gwsMcpCreds = path.join(homeDir, '.google_workspace_mcp');
+  if (fs.existsSync(gwsMcpCreds)) {
+    mounts.push({
+      hostPath: gwsMcpCreds,
+      containerPath: '/home/node/.google_workspace_mcp',
+      readonly: false,
+    });
   }
 
   // Per-group IPC namespace: each group gets its own IPC directory

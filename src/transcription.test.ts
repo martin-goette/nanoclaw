@@ -31,7 +31,7 @@ vi.mock('./logger.js', () => ({
 import { transcribeAudio } from './transcription.js';
 
 // Access the mock for assertions
-const { __mockCreate: mockCreate } = await import('openai') as any;
+const { __mockCreate: mockCreate } = (await import('openai')) as any;
 
 describe('transcribeAudio', () => {
   beforeEach(() => {
@@ -41,10 +41,7 @@ describe('transcribeAudio', () => {
   it('returns transcript text on success', async () => {
     mockCreate.mockResolvedValueOnce({ text: 'Hello world' });
 
-    const result = await transcribeAudio(
-      Buffer.from('fake-audio'),
-      'clip.m4a',
-    );
+    const result = await transcribeAudio(Buffer.from('fake-audio'), 'clip.m4a');
 
     expect(result).toBe('Hello world');
     expect(mockCreate).toHaveBeenCalledWith(
@@ -58,10 +55,7 @@ describe('transcribeAudio', () => {
   it('returns null when transcript is empty', async () => {
     mockCreate.mockResolvedValueOnce({ text: '' });
 
-    const result = await transcribeAudio(
-      Buffer.from('silence'),
-      'silence.m4a',
-    );
+    const result = await transcribeAudio(Buffer.from('silence'), 'silence.m4a');
 
     expect(result).toBeNull();
   });
@@ -69,10 +63,7 @@ describe('transcribeAudio', () => {
   it('returns null when API call fails', async () => {
     mockCreate.mockRejectedValueOnce(new Error('API error'));
 
-    const result = await transcribeAudio(
-      Buffer.from('bad-audio'),
-      'bad.m4a',
-    );
+    const result = await transcribeAudio(Buffer.from('bad-audio'), 'bad.m4a');
 
     expect(result).toBeNull();
   });

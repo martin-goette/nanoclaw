@@ -4,7 +4,14 @@ import path from 'path';
 import { GROUPS_DIR } from './config.js';
 import { logger } from './logger.js';
 
-const AUDIO_EXTENSIONS = new Set(['.m4a', '.mp3', '.ogg', '.opus', '.wav', '.webm']);
+const AUDIO_EXTENSIONS = new Set([
+  '.m4a',
+  '.mp3',
+  '.ogg',
+  '.opus',
+  '.wav',
+  '.webm',
+]);
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /**
@@ -44,7 +51,10 @@ export function cleanupOldAudioAttachments(): void {
             fs.unlinkSync(filePath);
             deleted++;
           } catch (err) {
-            logger.warn({ err, path: filePath }, 'Failed to delete old audio attachment');
+            logger.warn(
+              { err, path: filePath },
+              'Failed to delete old audio attachment',
+            );
           }
         }
       }

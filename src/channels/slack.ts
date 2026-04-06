@@ -199,7 +199,8 @@ export class SlackChannel implements Channel {
             const isAudio = file.mimetype?.startsWith('audio/');
             if (isAudio && !audioTranscribed) {
               if (fileBuffer.length > MAX_TRANSCRIPTION_SIZE) {
-                content += '\n\n[Audio clip too large for transcription (max ~25 min)]';
+                content +=
+                  '\n\n[Audio clip too large for transcription (max ~25 min)]';
               } else {
                 const transcript = await transcribeAudio(fileBuffer, file.name);
                 if (transcript) {

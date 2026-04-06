@@ -76,7 +76,6 @@ vi.mock('./env.js', () => ({
   }),
 }));
 
-
 // Create a controllable fake ChildProcess
 function createFakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {

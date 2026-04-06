@@ -70,6 +70,7 @@ export interface ScheduledTask {
   chat_jid: string;
   prompt: string;
   script?: string | null;
+  model?: string | null;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
   context_mode: 'group' | 'isolated';

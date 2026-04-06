@@ -33,6 +33,46 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  model?: string;
+  mcpServers?: Record<
+    string,
+    { command: string; args?: string[]; env?: Record<string, string> }
+  >;
+}
+
+const HAIKU = 'claude-haiku-4-5-20251001';
+const SONNET = 'claude-sonnet-4-6';
+const OPUS = 'claude-opus-4-6';
+
+// Patterns that indicate a simple relay message (no deep reasoning needed)
+const SIMPLE_REMINDER_PATTERNS = [
+  /^Send \w+ a reminder/i,
+  /^Send \w+ a birthday/i,
+  /^Send \w+ a workout/i,
+  /^Send \w+ a weekly/i,
+  /^Send \w+ a? ?morning/i,
+  /^Remind \w+ /i,
+];
+
+const VALID_MODELS = new Set([HAIKU, SONNET, OPUS]);
+
+function selectModel(input: ContainerInput): string {
+  // 1. Explicit model override from host — always respect (if valid)
+  if (input.model) {
+    return VALID_MODELS.has(input.model) ? input.model : SONNET;
+  }
+
+  // 2. Simple reminders → Haiku (just echo a message, no tools needed)
+  if (input.isScheduledTask) {
+    const isSimple = SIMPLE_REMINDER_PATTERNS.some((p) => p.test(input.prompt));
+    if (isSimple) {
+      log(`Using Haiku for simple reminder task`);
+      return HAIKU;
+    }
+  }
+
+  // 3. Default → Sonnet
+  return SONNET;
 }
 
 interface ContainerOutput {
@@ -377,6 +417,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
+  model: string,
   resumeAt?: string,
 ): Promise<{
   newSessionId?: string;
@@ -438,7 +479,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
-      model: 'claude-opus-4-6',
+      model,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -450,7 +491,6 @@ async function runQuery(
             append: globalClaudeMd,
           }
         : undefined,
-      model: 'sonnet[1m]',
       allowedTools: [
         'Bash',
         'Read',
@@ -471,6 +511,8 @@ async function runQuery(
         'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
+        'mcp__google-workspace__*',
+        'mcp__perplexity__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -614,6 +656,7 @@ async function main(): Promise<void> {
       /* may not exist */
     }
     log(`Received input for group: ${containerInput.groupFolder}`);
+    log(`MCP servers in input: ${containerInput.mcpServers ? Object.keys(containerInput.mcpServers).join(', ') : 'none'}`);
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -632,6 +675,17 @@ async function main(): Promise<void> {
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
+
+  // Write MCP server config so Claude Code discovers them automatically.
+  // The host resolves env vars and passes fully-resolved configs.
+  if (containerInput.mcpServers && Object.keys(containerInput.mcpServers).length > 0) {
+    const mcpJsonPath = path.join('/workspace/group', '.mcp.json');
+    fs.writeFileSync(
+      mcpJsonPath,
+      JSON.stringify({ mcpServers: containerInput.mcpServers }, null, 2),
+    );
+    log(`Wrote .mcp.json with servers: ${Object.keys(containerInput.mcpServers).join(', ')}`);
+  }
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
@@ -676,6 +730,10 @@ async function main(): Promise<void> {
     prompt = `[SCHEDULED TASK]\n\nScript output:\n${JSON.stringify(scriptResult.data, null, 2)}\n\nInstructions:\n${containerInput.prompt}`;
   }
 
+  // Select model once for the entire container session
+  const selectedModel = selectModel(containerInput);
+  log(`Selected model: ${selectedModel}`);
+
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
   try {
@@ -690,6 +748,7 @@ async function main(): Promise<void> {
         mcpServerPath,
         containerInput,
         sdkEnv,
+        selectedModel,
         resumeAt,
       );
       if (queryResult.newSessionId) {
@@ -735,6 +794,7 @@ async function main(): Promise<void> {
           mcpServerPath,
           containerInput,
           sdkEnv,
+          selectedModel,
           resumeAt,
         );
         log('State saved successfully');

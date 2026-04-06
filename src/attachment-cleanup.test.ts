@@ -28,9 +28,9 @@ describe('cleanupOldAudioAttachments', () => {
     const recentTimestamp = now - 1 * 24 * 60 * 60 * 1000; // 1 day ago
 
     vi.spyOn(fs, 'readdirSync')
-      .mockReturnValueOnce(
-        [{ name: 'test-group', isDirectory: () => true }] as any,
-      )
+      .mockReturnValueOnce([
+        { name: 'test-group', isDirectory: () => true },
+      ] as any)
       .mockReturnValueOnce([
         { name: `${oldTimestamp}-clip.m4a`, isDirectory: () => false },
         { name: `${recentTimestamp}-clip2.m4a`, isDirectory: () => false },
@@ -59,9 +59,7 @@ describe('cleanupOldAudioAttachments', () => {
     const recentTimestamp = now - 5 * 24 * 60 * 60 * 1000; // 5 days ago
 
     vi.spyOn(fs, 'readdirSync')
-      .mockReturnValueOnce(
-        [{ name: 'group1', isDirectory: () => true }] as any,
-      )
+      .mockReturnValueOnce([{ name: 'group1', isDirectory: () => true }] as any)
       .mockReturnValueOnce([
         { name: `${recentTimestamp}-voice.m4a`, isDirectory: () => false },
       ] as any);
@@ -75,9 +73,9 @@ describe('cleanupOldAudioAttachments', () => {
   });
 
   it('handles missing attachments directory gracefully', () => {
-    vi.spyOn(fs, 'readdirSync').mockReturnValueOnce(
-      [{ name: 'group1', isDirectory: () => true }] as any,
-    );
+    vi.spyOn(fs, 'readdirSync').mockReturnValueOnce([
+      { name: 'group1', isDirectory: () => true },
+    ] as any);
     vi.spyOn(fs, 'existsSync').mockReturnValue(false);
 
     expect(() => cleanupOldAudioAttachments()).not.toThrow();
