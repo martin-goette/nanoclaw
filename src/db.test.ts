@@ -9,8 +9,11 @@ import {
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
+  getSession,
+  getSessionMeta,
   getTaskById,
   setRegisteredGroup,
+  setSession,
   storeChatMetadata,
   storeMessage,
   updateTask,
@@ -648,5 +651,41 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+describe('session metadata', () => {
+  it('returns undefined when no session has been stored', () => {
+    expect(getSessionMeta('nonexistent')).toBeUndefined();
+  });
+
+  it('stores and retrieves sessionId with lastTurnAt', () => {
+    setSession('dana', 'sess-abc', 1_000_000);
+    expect(getSessionMeta('dana')).toEqual({
+      sessionId: 'sess-abc',
+      lastTurnAt: 1_000_000,
+    });
+  });
+
+  it('returns null lastTurnAt when only sessionId is set (legacy row)', () => {
+    setSession('legacy', 'sess-xyz');
+    expect(getSessionMeta('legacy')).toEqual({
+      sessionId: 'sess-xyz',
+      lastTurnAt: null,
+    });
+  });
+
+  it('overwrites sessionId and lastTurnAt on subsequent writes', () => {
+    setSession('dana', 'sess-1', 1_000);
+    setSession('dana', 'sess-2', 2_000);
+    expect(getSessionMeta('dana')).toEqual({
+      sessionId: 'sess-2',
+      lastTurnAt: 2_000,
+    });
+  });
+
+  it('legacy getSession still returns just the sessionId string', () => {
+    setSession('dana', 'sess-abc', 1_000);
+    expect(getSession('dana')).toBe('sess-abc');
   });
 });
