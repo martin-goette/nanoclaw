@@ -10,8 +10,10 @@ import {
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   POLL_INTERVAL,
+  SESSION_IDLE_TIMEOUT_MIN,
   TIMEZONE,
 } from './config.js';
+import { shouldRotateSession } from './session-rotation.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -36,6 +38,7 @@ import {
   getAllSessions,
   deleteSession,
   getAllTasks,
+  getSessionMeta,
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
@@ -320,7 +323,27 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  const meta = getSessionMeta(group.folder);
+  const storedSessionId = meta?.sessionId;
+  const rotate = shouldRotateSession(
+    meta?.lastTurnAt ?? null,
+    Date.now(),
+    SESSION_IDLE_TIMEOUT_MIN,
+  );
+  const sessionId = rotate ? undefined : storedSessionId;
+
+  if (storedSessionId && rotate) {
+    logger.info(
+      {
+        group: group.name,
+        previousSessionId: storedSessionId,
+        idleTimeoutMin: SESSION_IDLE_TIMEOUT_MIN,
+      },
+      'Rotating agent session after idle timeout',
+    );
+  } else if (sessionId) {
+    logger.debug({ group: group.name, sessionId }, 'Resuming agent session');
+  }
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -353,7 +376,7 @@ async function runAgent(
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          setSession(group.folder, output.newSessionId, Date.now());
         }
         await onOutput(output);
       }

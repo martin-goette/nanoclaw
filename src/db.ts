@@ -71,7 +71,8 @@ function createSchema(database: Database.Database): void {
     );
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL
+      session_id TEXT NOT NULL,
+      last_turn_at INTEGER
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
@@ -163,6 +164,13 @@ function createSchema(database: Database.Database): void {
     database.exec(`ALTER TABLE messages ADD COLUMN reply_to_sender_name TEXT`);
   } catch {
     /* columns already exist */
+  }
+
+  // Add last_turn_at column to sessions if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE sessions ADD COLUMN last_turn_at INTEGER`);
+  } catch {
+    /* column already exists */
   }
 }
 
@@ -577,17 +585,35 @@ export function setRouterState(key: string, value: string): void {
 
 // --- Session accessors ---
 
-export function getSession(groupFolder: string): string | undefined {
-  const row = db
-    .prepare('SELECT session_id FROM sessions WHERE group_folder = ?')
-    .get(groupFolder) as { session_id: string } | undefined;
-  return row?.session_id;
+export interface SessionMeta {
+  sessionId: string;
+  lastTurnAt: number | null;
 }
 
-export function setSession(groupFolder: string, sessionId: string): void {
+export function getSession(groupFolder: string): string | undefined {
+  return getSessionMeta(groupFolder)?.sessionId;
+}
+
+export function getSessionMeta(groupFolder: string): SessionMeta | undefined {
+  const row = db
+    .prepare(
+      'SELECT session_id, last_turn_at FROM sessions WHERE group_folder = ?',
+    )
+    .get(groupFolder) as
+    | { session_id: string; last_turn_at: number | null }
+    | undefined;
+  if (!row) return undefined;
+  return { sessionId: row.session_id, lastTurnAt: row.last_turn_at };
+}
+
+export function setSession(
+  groupFolder: string,
+  sessionId: string,
+  lastTurnAt?: number,
+): void {
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
-  ).run(groupFolder, sessionId);
+    'INSERT OR REPLACE INTO sessions (group_folder, session_id, last_turn_at) VALUES (?, ?, ?)',
+  ).run(groupFolder, sessionId, lastTurnAt ?? null);
 }
 
 export function deleteSession(groupFolder: string): void {
