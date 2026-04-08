@@ -576,10 +576,22 @@ async function main(): Promise<void> {
   loadState();
   restoreRemoteControl();
 
-  // Start credential proxy (containers route API calls through this)
+  // Start credential proxy (containers route API calls through this).
+  // Supports both API key and OAuth modes — mode is selected based on whether
+  // ANTHROPIC_API_KEY is set in .env (set → api-key, unset → oauth).
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
     PROXY_BIND_HOST,
+    undefined, // credentialsPath — use default
+    (message) => {
+      // Notify the main group (or first registered group) on OAuth auth failure
+      const jid =
+        Object.entries(registeredGroups).find(([, g]) => g.isMain)?.[0] ??
+        Object.keys(registeredGroups)[0];
+      if (!jid) return;
+      const channel = findChannel(channels, jid);
+      if (channel) channel.sendMessage(jid, message).catch(() => {});
+    },
   );
 
   // Graceful shutdown handlers
