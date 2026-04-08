@@ -61,6 +61,13 @@ vi.mock('./container-runtime.js', () => ({
   stopContainer: vi.fn(),
 }));
 
+// Mock credential-proxy — tests default to API key mode. Individual tests
+// can override detectAuthMode to 'oauth' via vi.mocked() if needed.
+vi.mock('./credential-proxy.js', () => ({
+  detectAuthMode: vi.fn(() => 'api-key'),
+  copyFreshCredentials: vi.fn(async () => true),
+}));
+
 // Mock env (readEnvFile)
 vi.mock('./env.js', () => ({
   readEnvFile: vi.fn((keys: string[]) => {
