@@ -37,76 +37,31 @@ Last updated: 2026-04-09, branch `v2`, commit `1dc5750`
 
 ---
 
-## What's NOT Done — Remaining Work for Fresh Install
+## Previously Open — Now Resolved
 
-### 1. v2 Channel Skills Don't Register Groups
+### 1. ~~v2 Channel Skills Don't Register Groups~~ ✅
 
-**Problem:** The v2 channel skills (`.claude/skills/add-telegram-v2/SKILL.md`, `add-slack-v2`, `add-linear-v2`, etc.) only do:
-- Install npm package
-- Uncomment barrel import
-- Collect credentials → write to `.env`
-- Build and verify
+Channel skills now point to `/manage-channels` in their "Next Steps" section. Registration is handled by the `/manage-channels` skill, which reads each channel's `## Channel Info` section for platform-specific guidance. Channel skills stay lean (credentials only).
 
-They do NOT create agent groups, messaging groups, or wiring in the v2 central DB. Without these DB entities, the router auto-creates a `messaging_group` on first message but finds no `messaging_group_agents` → message is silently dropped (now logged as WARN).
+### 2. ~~v1 add-discord Skill is Incompatible~~ ✅
 
-**Fix needed:** Each v2 channel skill needs a registration phase that calls:
-```bash
-npx tsx setup/index.ts --step register -- \
-  --platform-id "<channel-id>" \
-  --name "<group-name>" \
-  --folder "<agent-folder>" \
-  --trigger "@BotName" \
-  --channel <channel-type> \
-  --is-main  # (if this is the primary group)
-```
+Created `/add-discord-v2` skill matching the v2 pattern. Setup SKILL.md updated to reference `/add-discord-v2`.
 
-Or alternatively, add a dedicated "register groups" step to `setup/SKILL.md` between step 5 (channels) and step 6 (mounts). This step would:
-1. Ask the user how many agent groups they want
-2. For each group: name, folder, which channels it handles, trigger pattern, session mode
-3. Call `setup/register.ts` for each
+### 3. ~~Setup SKILL.md Missing Group Registration Step~~ ✅
 
-### 2. v1 add-discord Skill is Incompatible
+Added step 5a "Wire Channels to Agent Groups" between channel installation (step 5) and mount allowlist (step 6). This step invokes `/manage-channels` which handles agent group creation, isolation level decisions, and wiring.
 
-**Problem:** Setup SKILL.md line 263 references `/add-discord` (v1 skill). This skill:
-- Tries to merge a branch (`feat/discord`)
-- Uses `--jid "dc:<id>"` format
-- References `store/messages.db` for verification
-- Creates a v1 DiscordChannel class (we now use Chat SDK)
+### 4. ~~Channel Skills Should Know Channel Type~~ ✅
 
-**Fix needed:** Either:
-- Create a `/add-discord-v2` skill matching the pattern of other v2 skills
-- Or update the existing `/add-discord` skill for v2
-- Update `setup/SKILL.md` line 263 to reference the correct skill
+Each v2 channel skill now has a `## Channel Info` structured section with: type, terminology, how-to-find-id, supports-threads, typical-use, default-isolation. The `/manage-channels` skill reads this for contextual recommendations.
 
-### 3. Setup SKILL.md Missing Group Registration Step
+### 5. ~~Verify Step Channel Auth Check~~ ✅
 
-**Problem:** The setup flow (steps 0-9) has no step for creating agent groups. Channels get configured (step 5) but nobody creates the v2 entities needed for routing.
+`setup/verify.ts` now checks all v2 channel tokens: DISCORD_BOT_TOKEN, TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, GITHUB_TOKEN, LINEAR_API_KEY, GCHAT_CREDENTIALS, TEAMS_APP_ID+TEAMS_APP_PASSWORD, WEBEX_BOT_TOKEN, MATRIX_ACCESS_TOKEN, RESEND_API_KEY, WHATSAPP_ACCESS_TOKEN, IMESSAGE_ENABLED, plus WhatsApp Baileys auth dir.
 
-**Fix needed:** Add a step (probably between current step 5 and 6, or as part of step 5) that:
-1. Asks "What do you want to name your assistant?" (already partially handled by `--assistant-name`)
-2. Asks which channel+platform-id is the primary/admin channel
-3. Creates the agent_group with `is_admin=1`
-4. Creates messaging_group + messaging_group_agents wiring
-5. Optionally creates additional non-admin agent groups
+### 6. Agent-Shared Session Mode ✅
 
-The v1 flow embedded this in each channel skill's "Register" phase. The v2 flow should either do the same (add register calls to each v2 channel skill) or centralize it.
-
-### 4. Setup Groups Step (`setup/groups.ts`)
-
-Check if `setup/groups.ts` exists and what it does. It may need updating for v2 or may need to be created.
-
-### 5. Channel Skills Should Know Channel Type
-
-Each v2 channel skill knows its channel type (discord, telegram, slack, etc.) but the registration args need the platform-specific channel/group ID which the user must provide. The skill should ask for this during Phase 3 (Setup) and then call register.
-
-### 6. Verify Step Channel Auth Check
-
-`setup/verify.ts` currently checks for a limited set of channel tokens:
-- TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN, SLACK_APP_TOKEN, DISCORD_BOT_TOKEN
-- WhatsApp auth dir
-
-It should also check for v2 channel tokens:
-- GITHUB_TOKEN, LINEAR_API_KEY, GCHAT_CREDENTIALS, TEAMS_APP_PASSWORD, etc.
+Added `session_mode: 'agent-shared'` for cross-channel shared sessions (e.g. GitHub + Slack in one conversation). Session resolution looks up by agent_group_id instead of messaging_group_id when this mode is set.
 
 ---
 

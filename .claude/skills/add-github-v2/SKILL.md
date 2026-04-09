@@ -1,25 +1,21 @@
 ---
 name: add-github-v2
-description: Add GitHub channel integration to NanoClaw v2 via Chat SDK. PR comment threads as conversations.
+description: Add GitHub channel integration to NanoClaw v2 via Chat SDK. PR and issue comment threads as conversations.
 ---
 
-# Add GitHub Channel (v2)
+# Add GitHub Channel
 
-This skill adds GitHub support to NanoClaw v2 using the Chat SDK bridge. The agent can participate in PR comment threads.
+Adds GitHub support to NanoClaw v2 using the Chat SDK bridge. The agent participates in PR and issue comment threads.
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/github.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/github.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
-
-### Install the adapter package
+## Install
 
 ```bash
 npm install @chat-adapter/github
 ```
-
-### Enable the channel
 
 Uncomment the GitHub import in `src/channels/index.ts`:
 
@@ -27,15 +23,11 @@ Uncomment the GitHub import in `src/channels/index.ts`:
 import './github.js';
 ```
 
-### Build
-
 ```bash
 npm run build
 ```
 
-## Phase 3: Setup
-
-### Create GitHub credentials
+## Credentials
 
 > 1. Go to [GitHub Settings > Developer Settings > Personal Access Tokens](https://github.com/settings/tokens)
 > 2. Create a **Fine-grained token** with:
@@ -60,21 +52,17 @@ GITHUB_WEBHOOK_SECRET=your-webhook-secret
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# systemctl --user restart nanoclaw  # Linux
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> @mention the bot in a PR comment or issue comment. The bot should respond within a few seconds.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './github.js'` in `src/channels/index.ts`
-2. Remove `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` from `.env`
-3. `npm uninstall @chat-adapter/github`
-4. Rebuild and restart
+- **type**: `github`
+- **terminology**: GitHub has "repositories" containing "pull requests" and "issues." Each PR or issue comment thread is a separate conversation.
+- **how-to-find-id**: The platform ID is `owner/repo` (e.g. `acme/backend`). Each PR/issue becomes its own thread automatically.
+- **supports-threads**: yes (PR and issue comment threads are native conversations)
+- **typical-use**: Webhook/notification — the agent receives PR and issue events and responds in comment threads
+- **default-isolation**: Typically shares a session with a chat channel (e.g. Slack) so the agent can summarize PRs and respond to reviews in the same context. Use a separate agent group if the repo contains sensitive code that other channels shouldn't access.

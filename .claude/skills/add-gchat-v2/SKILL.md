@@ -3,23 +3,19 @@ name: add-gchat-v2
 description: Add Google Chat channel integration to NanoClaw v2 via Chat SDK.
 ---
 
-# Add Google Chat Channel (v2)
+# Add Google Chat Channel
 
-This skill adds Google Chat support to NanoClaw v2 using the Chat SDK bridge.
+Adds Google Chat support to NanoClaw v2 using the Chat SDK bridge.
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/gchat.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/gchat.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
-
-### Install the adapter package
+## Install
 
 ```bash
 npm install @chat-adapter/gchat
 ```
-
-### Enable the channel
 
 Uncomment the Google Chat import in `src/channels/index.ts`:
 
@@ -27,15 +23,11 @@ Uncomment the Google Chat import in `src/channels/index.ts`:
 import './gchat.js';
 ```
 
-### Build
-
 ```bash
 npm run build
 ```
 
-## Phase 3: Setup
-
-### Create Google Chat App
+## Credentials
 
 > 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 > 2. Create or select a project
@@ -58,21 +50,17 @@ GCHAT_CREDENTIALS={"type":"service_account","project_id":"...","private_key":"..
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# systemctl --user restart nanoclaw  # Linux
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> Add the bot to a Google Chat space, then send a message or @mention the bot.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './gchat.js'` in `src/channels/index.ts`
-2. Remove `GCHAT_CREDENTIALS` from `.env`
-3. `npm uninstall @chat-adapter/gchat`
-4. Rebuild and restart
+- **type**: `gchat`
+- **terminology**: Google Chat has "spaces." A space can be a group conversation or a direct message with the bot.
+- **how-to-find-id**: Open the space in Google Chat, look at the URL — the space ID is the segment after `/space/` (e.g. `spaces/AAAA...`). Or use the Google Chat API to list spaces.
+- **supports-threads**: yes
+- **typical-use**: Interactive chat — team spaces or direct messages
+- **default-isolation**: Same agent group for spaces where you're the primary user. Separate agent group for spaces with different teams or sensitive contexts.

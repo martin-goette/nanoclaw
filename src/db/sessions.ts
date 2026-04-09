@@ -27,6 +27,13 @@ export function findSession(messagingGroupId: string, threadId: string | null): 
     .get(messagingGroupId, 'active') as Session | undefined;
 }
 
+/** Find an active session scoped to an agent group (ignoring messaging group). */
+export function findSessionByAgentGroup(agentGroupId: string): Session | undefined {
+  return getDb()
+    .prepare("SELECT * FROM sessions WHERE agent_group_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1")
+    .get(agentGroupId) as Session | undefined;
+}
+
 export function getSessionsByAgentGroup(agentGroupId: string): Session[] {
   return getDb().prepare('SELECT * FROM sessions WHERE agent_group_id = ?').all(agentGroupId) as Session[];
 }

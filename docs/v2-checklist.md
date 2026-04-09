@@ -55,8 +55,10 @@ Status: [x] done, [~] partial, [ ] not started
 - [~] iMessage via Chat SDK (adapter + skill written, not tested)
 - [x] Backward compatibility with native channels (old adapters still work)
 - [x] Channel barrel wired (src/index.ts imports barrel, skills uncomment)
-- [~] Setup flow wired to v2 channels (register.ts + verify.ts updated, but channel skills don't call register yet — see docs/v2-setup-wiring.md)
-- [ ] Setup communicates each group is a different agent, distinct names
+- [x] Setup flow wired to v2 channels (channel skills + /manage-channels for registration + verify.ts checks all tokens)
+- [x] Channel Info metadata in each channel skill (type, terminology, how-to-find-id, isolation defaults)
+- [x] /manage-channels skill (wire channels to agent groups with three isolation levels)
+- [x] Agent-shared session mode (cross-channel shared sessions, e.g. GitHub + Slack)
 - [ ] Setup vs production channel separation
 - [ ] Generate visual diagram of customized instance at end of setup
 

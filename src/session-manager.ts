@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
-import { createSession, findSession, getSession, updateSession } from './db/sessions.js';
+import { createSession, findSession, findSessionByAgentGroup, getSession, updateSession } from './db/sessions.js';
 import { log } from './log.js';
 import { INBOUND_SCHEMA, OUTBOUND_SCHEMA } from './db/schema.js';
 import type { Session } from './types.js';
@@ -55,22 +55,35 @@ function generateId(): string {
 
 /**
  * Find or create a session for a messaging group + thread.
- * Returns the session and whether it was newly created.
+ *
+ * Session modes:
+ * - 'shared': one session per messaging group (ignores threadId)
+ * - 'per-thread': one session per (messaging group, thread)
+ * - 'agent-shared': one session per agent group — all messaging groups
+ *   wired with this mode share a single session (e.g. GitHub + Slack)
  */
 export function resolveSession(
   agentGroupId: string,
   messagingGroupId: string,
   threadId: string | null,
-  sessionMode: 'shared' | 'per-thread',
+  sessionMode: 'shared' | 'per-thread' | 'agent-shared',
 ): { session: Session; created: boolean } {
-  const lookupThreadId = sessionMode === 'shared' ? null : threadId;
-  const existing = findSession(messagingGroupId, lookupThreadId);
-
-  if (existing) {
-    return { session: existing, created: false };
+  // agent-shared: single session per agent group, regardless of messaging group
+  if (sessionMode === 'agent-shared') {
+    const existing = findSessionByAgentGroup(agentGroupId);
+    if (existing) {
+      return { session: existing, created: false };
+    }
+  } else {
+    const lookupThreadId = sessionMode === 'shared' ? null : threadId;
+    const existing = findSession(messagingGroupId, lookupThreadId);
+    if (existing) {
+      return { session: existing, created: false };
+    }
   }
 
   const id = generateId();
+  const lookupThreadId = sessionMode === 'per-thread' ? threadId : null;
   const session: Session = {
     id,
     agent_group_id: agentGroupId,
@@ -85,7 +98,7 @@ export function resolveSession(
 
   createSession(session);
   initSessionFolder(agentGroupId, id);
-  log.info('Session created', { id, agentGroupId, messagingGroupId, threadId: lookupThreadId });
+  log.info('Session created', { id, agentGroupId, messagingGroupId, threadId: lookupThreadId, sessionMode });
 
   return { session, created: true };
 }

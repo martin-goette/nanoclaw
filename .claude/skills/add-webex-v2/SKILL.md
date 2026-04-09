@@ -3,23 +3,19 @@ name: add-webex-v2
 description: Add Webex channel integration to NanoClaw v2 via Chat SDK.
 ---
 
-# Add Webex Channel (v2)
+# Add Webex Channel
 
-This skill adds Cisco Webex support to NanoClaw v2 using the Chat SDK bridge.
+Adds Cisco Webex support to NanoClaw v2 using the Chat SDK bridge.
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/webex.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/webex.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
-
-### Install the adapter package
+## Install
 
 ```bash
 npm install @bitbasti/chat-adapter-webex
 ```
-
-### Enable the channel
 
 Uncomment the Webex import in `src/channels/index.ts`:
 
@@ -27,22 +23,17 @@ Uncomment the Webex import in `src/channels/index.ts`:
 import './webex.js';
 ```
 
-### Build
-
 ```bash
 npm run build
 ```
 
-## Phase 3: Setup
+## Credentials
 
-### Create Webex Bot
-
-> 1. Go to [developer.webex.com](https://developer.webex.com/my-apps/new/bot)
-> 2. Create a new bot and copy the **Bot Access Token**
-> 3. Set up a webhook:
->    - Use the Webex API to create a webhook pointing to `https://your-domain/webhook/webex`
->    - Or use the Webex Developer Portal
->    - Set a webhook secret for signature verification
+1. Go to [developer.webex.com](https://developer.webex.com/my-apps/new/bot) and create a new bot
+2. Copy the **Bot Access Token**
+3. Set up a webhook:
+   - Use the Webex API or Developer Portal to create a webhook pointing to `https://your-domain/webhook/webex`
+   - Set a webhook secret for signature verification
 
 ### Configure environment
 
@@ -55,21 +46,17 @@ WEBEX_WEBHOOK_SECRET=your-webhook-secret
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# systemctl --user restart nanoclaw  # Linux
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> Add the bot to a Webex space or send it a direct message. The bot should respond within a few seconds.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './webex.js'` in `src/channels/index.ts`
-2. Remove `WEBEX_BOT_TOKEN` and `WEBEX_WEBHOOK_SECRET` from `.env`
-3. `npm uninstall @bitbasti/chat-adapter-webex`
-4. Rebuild and restart
+- **type**: `webex`
+- **terminology**: Webex has "spaces." A space can be a group conversation or a 1:1 direct message with the bot.
+- **how-to-find-id**: Open the space in Webex, click the space name > Settings — the Space ID is listed there. Or use the Webex API (`GET /rooms`) to list spaces and their IDs.
+- **supports-threads**: yes
+- **typical-use**: Interactive chat — team spaces or direct messages
+- **default-isolation**: Same agent group for spaces where you're the primary user. Separate agent group for spaces with different teams or sensitive information.

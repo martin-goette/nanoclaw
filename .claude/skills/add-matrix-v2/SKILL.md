@@ -1,25 +1,21 @@
 ---
 name: add-matrix-v2
-description: Add Matrix channel integration to NanoClaw v2 via Chat SDK. Works with any Matrix homeserver (Element, Beeper, etc.).
+description: Add Matrix channel integration to NanoClaw v2 via Chat SDK. Works with any Matrix homeserver.
 ---
 
-# Add Matrix Channel (v2)
+# Add Matrix Channel
 
-This skill adds Matrix support to NanoClaw v2 using the Chat SDK bridge. Works with any Matrix homeserver.
+Adds Matrix support to NanoClaw v2 using the Chat SDK bridge.
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/matrix.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/matrix.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
-
-### Install the adapter package
+## Install
 
 ```bash
 npm install @beeper/chat-adapter-matrix
 ```
-
-### Enable the channel
 
 Uncomment the Matrix import in `src/channels/index.ts`:
 
@@ -27,22 +23,18 @@ Uncomment the Matrix import in `src/channels/index.ts`:
 import './matrix.js';
 ```
 
-### Build
-
 ```bash
 npm run build
 ```
 
-## Phase 3: Setup
+## Credentials
 
-### Create Matrix bot account
-
-> 1. Register a bot account on your Matrix homeserver (e.g., via Element)
-> 2. Get the homeserver URL (e.g., `https://matrix.org` or your self-hosted URL)
-> 3. Get an access token:
->    - In Element: **Settings** > **Help & About** > **Access Token** (advanced)
->    - Or via API: `curl -XPOST 'https://matrix.org/_matrix/client/r0/login' -d '{"type":"m.login.password","user":"botuser","password":"..."}'`
-> 4. Note the bot's user ID (e.g., `@botuser:matrix.org`)
+1. Register a bot account on your Matrix homeserver (e.g., via Element)
+2. Get the homeserver URL (e.g., `https://matrix.org` or your self-hosted URL)
+3. Get an access token:
+   - In Element: **Settings** > **Help & About** > **Access Token** (advanced)
+   - Or via API: `curl -XPOST 'https://matrix.org/_matrix/client/r0/login' -d '{"type":"m.login.password","user":"botuser","password":"..."}'`
+4. Note the bot's user ID (e.g., `@botuser:matrix.org`)
 
 ### Configure environment
 
@@ -57,21 +49,17 @@ MATRIX_BOT_USERNAME=botuser
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# systemctl --user restart nanoclaw  # Linux
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> Invite the bot to a Matrix room and send a message. The bot should respond within a few seconds.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './matrix.js'` in `src/channels/index.ts`
-2. Remove `MATRIX_BASE_URL`, `MATRIX_ACCESS_TOKEN`, `MATRIX_USER_ID`, `MATRIX_BOT_USERNAME` from `.env`
-3. `npm uninstall @beeper/chat-adapter-matrix`
-4. Rebuild and restart
+- **type**: `matrix`
+- **terminology**: Matrix has "rooms." A room can be a group chat or a direct message. Rooms have internal IDs (like `!abc123:matrix.org`) and optional aliases (like `#general:matrix.org`).
+- **how-to-find-id**: In Element, click the room name > Settings > Advanced — the "Internal room ID" is the platform ID (starts with `!`). Or use a room alias like `#general:matrix.org`.
+- **supports-threads**: partial (some clients support threads, but not all — treat as no for reliability)
+- **typical-use**: Interactive chat — rooms or direct messages
+- **default-isolation**: Same agent group for rooms where you're the primary user. Separate agent group for rooms with different communities or sensitive contexts.

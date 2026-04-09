@@ -3,23 +3,19 @@ name: add-teams-v2
 description: Add Microsoft Teams channel integration to NanoClaw v2 via Chat SDK.
 ---
 
-# Add Microsoft Teams Channel (v2)
+# Add Microsoft Teams Channel
 
-This skill adds Microsoft Teams support to NanoClaw v2 using the Chat SDK bridge.
+Connect NanoClaw to Microsoft Teams for interactive chat in team channels and direct messages.
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/teams.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/teams.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
-
-### Install the adapter package
+## Install
 
 ```bash
 npm install @chat-adapter/teams
 ```
-
-### Enable the channel
 
 Uncomment the Teams import in `src/channels/index.ts`:
 
@@ -27,22 +23,18 @@ Uncomment the Teams import in `src/channels/index.ts`:
 import './teams.js';
 ```
 
-### Build
+Build:
 
 ```bash
 npm run build
 ```
 
-## Phase 3: Setup
+## Credentials
 
-### Create Teams Bot
-
-> 1. Go to [Azure Portal](https://portal.azure.com) > **Azure Bot** > **Create**
-> 2. Fill in the bot details and create
-> 3. Go to **Configuration**:
->    - Messaging endpoint: `https://your-domain/webhook/teams`
-> 4. Go to **Channels** > add **Microsoft Teams**
-> 5. Note the **Microsoft App ID** and **Password** (from the bot's Azure AD app registration)
+1. Go to [Azure Portal](https://portal.azure.com) > **Azure Bot** > **Create**.
+2. Configure the messaging endpoint: `https://your-domain/webhook/teams`.
+3. Add the **Microsoft Teams** channel.
+4. Note the **App ID** and **Password** from the Azure AD app registration.
 
 ### Configure environment
 
@@ -55,21 +47,17 @@ TEAMS_APP_PASSWORD=your-app-password
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# systemctl --user restart nanoclaw  # Linux
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> Add the bot to a Teams channel or send it a direct message. The bot should respond within a few seconds.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './teams.js'` in `src/channels/index.ts`
-2. Remove `TEAMS_APP_ID` and `TEAMS_APP_PASSWORD` from `.env`
-3. `npm uninstall @chat-adapter/teams`
-4. Rebuild and restart
+- **type**: `teams`
+- **terminology**: Teams has "teams" containing "channels." The bot can also receive direct messages. Teams channels can have threaded replies.
+- **how-to-find-id**: Right-click a channel in Teams > "Get link to channel" -- the channel ID is in the URL. Or use the Microsoft Graph API to list channels.
+- **supports-threads**: yes
+- **typical-use**: Interactive chat -- team channels or direct messages
+- **default-isolation**: Same agent group for channels where you're the primary user. Separate agent group for channels with different teams or where different members have different information boundaries.

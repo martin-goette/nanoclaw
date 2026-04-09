@@ -26,7 +26,7 @@ export interface MessagingGroupAgent {
   agent_group_id: string;
   trigger_rules: string | null; // JSON: { pattern, mentionOnly, excludeSenders, includeSenders }
   response_scope: 'all' | 'triggered' | 'allowlisted';
-  session_mode: 'shared' | 'per-thread';
+  session_mode: 'shared' | 'per-thread' | 'agent-shared';
   priority: number;
   created_at: string;
 }

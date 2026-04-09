@@ -3,23 +3,19 @@ name: add-resend-v2
 description: Add Resend (email) channel integration to NanoClaw v2 via Chat SDK.
 ---
 
-# Add Resend Email Channel (v2)
+# Add Resend Email Channel
 
-This skill adds email support via Resend to NanoClaw v2 using the Chat SDK bridge.
+Connect NanoClaw to email via Resend for async email conversations.
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/resend.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/resend.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
-
-### Install the adapter package
+## Install
 
 ```bash
 npm install @resend/chat-sdk-adapter
 ```
-
-### Enable the channel
 
 Uncomment the Resend import in `src/channels/index.ts`:
 
@@ -27,24 +23,22 @@ Uncomment the Resend import in `src/channels/index.ts`:
 import './resend.js';
 ```
 
-### Build
+Build:
 
 ```bash
 npm run build
 ```
 
-## Phase 3: Setup
+## Credentials
 
-### Create Resend credentials
-
-> 1. Go to [resend.com](https://resend.com) and create an account
-> 2. Add and verify your sending domain
-> 3. Go to **API Keys** and create a new key
-> 4. Set up a webhook:
->    - Go to **Webhooks** > **Add webhook**
->    - URL: `https://your-domain/webhook/resend`
->    - Events: select **email.received** (for inbound email)
->    - Copy the signing secret
+1. Go to [resend.com](https://resend.com) and create an account.
+2. Add and verify your sending domain.
+3. Go to **API Keys** and create a new key.
+4. Set up a webhook:
+   - Go to **Webhooks** > **Add webhook**.
+   - URL: `https://your-domain/webhook/resend`.
+   - Events: select **email.received**.
+   - Copy the signing secret.
 
 ### Configure environment
 
@@ -59,21 +53,17 @@ RESEND_WEBHOOK_SECRET=your-webhook-secret
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# systemctl --user restart nanoclaw  # Linux
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> Send an email to the configured from address. The bot should respond via email within a few seconds.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './resend.js'` in `src/channels/index.ts`
-2. Remove `RESEND_API_KEY`, `RESEND_FROM_ADDRESS`, `RESEND_FROM_NAME`, `RESEND_WEBHOOK_SECRET` from `.env`
-3. `npm uninstall @resend/chat-sdk-adapter`
-4. Rebuild and restart
+- **type**: `resend`
+- **terminology**: Resend handles email. Each email thread (identified by subject/In-Reply-To headers) is a separate conversation. The "from address" is the bot's identity.
+- **how-to-find-id**: The platform ID is the from email address (e.g. `bot@yourdomain.com`). Each sender's email thread becomes its own conversation.
+- **supports-threads**: yes (via email threading headers -- replies to the same thread stay together)
+- **typical-use**: Async communication -- email conversations with longer response expectations
+- **default-isolation**: Same agent group if you want your agent to handle email alongside other channels. Separate agent group if email contains sensitive correspondence that shouldn't be accessible from other channels.

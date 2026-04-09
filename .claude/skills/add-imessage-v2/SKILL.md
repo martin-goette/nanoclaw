@@ -3,23 +3,19 @@ name: add-imessage-v2
 description: Add iMessage channel integration to NanoClaw v2 via Chat SDK. Local (macOS) or remote (Photon API) mode.
 ---
 
-# Add iMessage Channel (v2)
+# Add iMessage Channel
 
-This skill adds iMessage support to NanoClaw v2 using the Chat SDK bridge. Supports local mode (macOS with Full Disk Access) and remote mode (via Photon API).
+Adds iMessage support to NanoClaw v2 using the Chat SDK bridge. Two modes: local (macOS with Full Disk Access) or remote (Photon API).
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/imessage.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/imessage.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
-
-### Install the adapter package
+## Install
 
 ```bash
 npm install chat-adapter-imessage
 ```
-
-### Enable the channel
 
 Uncomment the iMessage import in `src/channels/index.ts`:
 
@@ -27,37 +23,35 @@ Uncomment the iMessage import in `src/channels/index.ts`:
 import './imessage.js';
 ```
 
-### Build
-
 ```bash
 npm run build
 ```
 
-## Phase 3: Setup
+## Credentials
 
 ### Local Mode (macOS)
 
-> **Requirements**: macOS with Full Disk Access granted to your terminal/Node.js process.
->
-> 1. Go to **System Settings** > **Privacy & Security** > **Full Disk Access**
-> 2. Add your terminal app (Terminal, iTerm2, etc.) or the Node.js binary
-> 3. The adapter reads directly from the iMessage database on disk
+Requirements: macOS with Full Disk Access granted to your terminal/Node.js process.
+
+1. Go to **System Settings** > **Privacy & Security** > **Full Disk Access**
+2. Add your terminal app (Terminal, iTerm2, etc.) or the Node.js binary
+3. The adapter reads directly from the iMessage database on disk
 
 ### Remote Mode (Photon API)
 
-> 1. Set up a [Photon](https://photon.im) account
-> 2. Get your server URL and API key
+1. Set up a [Photon](https://photon.im) account
+2. Get your server URL and API key
 
 ### Configure environment
 
-**Local mode** — add to `.env`:
+**Local mode** -- add to `.env`:
 
 ```bash
 IMESSAGE_ENABLED=true
 IMESSAGE_LOCAL=true
 ```
 
-**Remote mode** — add to `.env`:
+**Remote mode** -- add to `.env`:
 
 ```bash
 IMESSAGE_LOCAL=false
@@ -67,20 +61,17 @@ IMESSAGE_API_KEY=your-api-key
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> Send an iMessage to the account running NanoClaw. The bot should respond within a few seconds.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './imessage.js'` in `src/channels/index.ts`
-2. Remove iMessage env vars from `.env`
-3. `npm uninstall chat-adapter-imessage`
-4. Rebuild and restart
+- **type**: `imessage`
+- **terminology**: iMessage has "conversations." Each conversation is with a contact identified by phone number or email address. Group chats are also supported.
+- **how-to-find-id**: The platform ID is the contact's phone number (e.g. `+15551234567`) or email address. For group chats, the ID is assigned by iMessage internally.
+- **supports-threads**: no
+- **typical-use**: Interactive 1:1 chat — personal messaging
+- **default-isolation**: Same agent group if you're the only person messaging the bot across iMessage and other channels. Separate agent group if different contacts should have information isolation.

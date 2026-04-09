@@ -11,7 +11,7 @@ export interface ConversationConfig {
   agentGroupId: string;
   triggerPattern?: string; // regex string (for native channels)
   requiresTrigger: boolean;
-  sessionMode: 'shared' | 'per-thread';
+  sessionMode: 'shared' | 'per-thread' | 'agent-shared';
 }
 
 /** Passed to the adapter at setup time. */

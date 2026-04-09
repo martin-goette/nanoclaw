@@ -112,29 +112,40 @@ export async function run(_args: string[]): Promise<void> {
     'SLACK_BOT_TOKEN',
     'SLACK_APP_TOKEN',
     'DISCORD_BOT_TOKEN',
+    'GITHUB_TOKEN',
+    'LINEAR_API_KEY',
+    'GCHAT_CREDENTIALS',
+    'TEAMS_APP_ID',
+    'TEAMS_APP_PASSWORD',
+    'WEBEX_BOT_TOKEN',
+    'MATRIX_ACCESS_TOKEN',
+    'RESEND_API_KEY',
+    'WHATSAPP_ACCESS_TOKEN',
+    'IMESSAGE_ENABLED',
   ]);
 
+  const has = (key: string) => !!(process.env[key] || envVars[key]);
   const channelAuth: Record<string, string> = {};
 
-  // WhatsApp: check for auth credentials on disk
+  // WhatsApp Baileys: check for auth credentials on disk
   const authDir = path.join(projectRoot, 'store', 'auth');
   if (fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0) {
     channelAuth.whatsapp = 'authenticated';
   }
 
-  // Token-based channels: check .env
-  if (process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN) {
-    channelAuth.telegram = 'configured';
-  }
-  if (
-    (process.env.SLACK_BOT_TOKEN || envVars.SLACK_BOT_TOKEN) &&
-    (process.env.SLACK_APP_TOKEN || envVars.SLACK_APP_TOKEN)
-  ) {
-    channelAuth.slack = 'configured';
-  }
-  if (process.env.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN) {
-    channelAuth.discord = 'configured';
-  }
+  // Token-based channels
+  if (has('DISCORD_BOT_TOKEN')) channelAuth.discord = 'configured';
+  if (has('TELEGRAM_BOT_TOKEN')) channelAuth.telegram = 'configured';
+  if (has('SLACK_BOT_TOKEN') && has('SLACK_APP_TOKEN')) channelAuth.slack = 'configured';
+  if (has('GITHUB_TOKEN')) channelAuth.github = 'configured';
+  if (has('LINEAR_API_KEY')) channelAuth.linear = 'configured';
+  if (has('GCHAT_CREDENTIALS')) channelAuth.gchat = 'configured';
+  if (has('TEAMS_APP_ID') && has('TEAMS_APP_PASSWORD')) channelAuth.teams = 'configured';
+  if (has('WEBEX_BOT_TOKEN')) channelAuth.webex = 'configured';
+  if (has('MATRIX_ACCESS_TOKEN')) channelAuth.matrix = 'configured';
+  if (has('RESEND_API_KEY')) channelAuth.resend = 'configured';
+  if (has('WHATSAPP_ACCESS_TOKEN')) channelAuth['whatsapp-cloud'] = 'configured';
+  if (has('IMESSAGE_ENABLED')) channelAuth.imessage = 'configured';
 
   const configuredChannels = Object.keys(channelAuth);
   const anyChannelConfigured = configuredChannels.length > 0;

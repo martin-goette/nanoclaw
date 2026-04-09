@@ -3,15 +3,15 @@ name: add-telegram-v2
 description: Add Telegram channel integration to NanoClaw v2 via Chat SDK.
 ---
 
-# Add Telegram Channel (v2)
+# Add Telegram Channel
 
-This skill adds Telegram support to NanoClaw v2 using the Chat SDK bridge.
+Adds Telegram bot support to NanoClaw v2 using the Chat SDK bridge.
 
-## Phase 1: Pre-flight
+## Pre-flight
 
-Check if `src/channels/telegram.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Phase 3.
+Check if `src/channels/telegram.ts` exists and the import is uncommented in `src/channels/index.ts`. If both are in place, skip to Credentials.
 
-## Phase 2: Apply Code Changes
+## Install
 
 ### Install the adapter package
 
@@ -33,22 +33,20 @@ import './telegram.js';
 npm run build
 ```
 
-## Phase 3: Setup
+## Credentials
 
-### Create Telegram Bot (if needed)
+### Create Telegram Bot
 
-> 1. Open Telegram and search for `@BotFather`
-> 2. Send `/newbot` and follow the prompts:
->    - Bot name: Something friendly (e.g., "NanoClaw Assistant")
->    - Bot username: Must end with "bot" (e.g., "nanoclaw_bot")
-> 3. Copy the bot token (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+1. Open Telegram and search for `@BotFather`
+2. Send `/newbot` and follow the prompts:
+   - Bot name: Something friendly (e.g., "NanoClaw Assistant")
+   - Bot username: Must end with "bot" (e.g., "nanoclaw_bot")
+3. Copy the bot token (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
 
-### Disable Group Privacy (for group chats)
+**Important for group chats**: By default, Telegram bots only see @mentions and commands in groups. To let the bot see all messages:
 
-> **Important for group chats**: By default, Telegram bots only see @mentions and commands in groups. To let the bot see all messages:
->
-> 1. Open `@BotFather` > `/mybots` > select your bot
-> 2. **Bot Settings** > **Group Privacy** > **Turn off**
+1. Open `@BotFather` > `/mybots` > select your bot
+2. **Bot Settings** > **Group Privacy** > **Turn off**
 
 ### Configure environment
 
@@ -60,23 +58,17 @@ TELEGRAM_BOT_TOKEN=your-bot-token
 
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Build and restart
+## Next Steps
 
-```bash
-npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# systemctl --user restart nanoclaw  # Linux
-```
+If you're in the middle of `/setup`, return to the setup flow now.
 
-## Phase 4: Verify
+Otherwise, run `/manage-channels` to wire this channel to an agent group.
 
-> Send a message to your bot in Telegram (search for its username).
-> For groups: add the bot to a group and send a message.
-> The bot should respond within a few seconds.
+## Channel Info
 
-## Removal
-
-1. Comment out `import './telegram.js'` in `src/channels/index.ts`
-2. Remove `TELEGRAM_BOT_TOKEN` from `.env`
-3. `npm uninstall @chat-adapter/telegram`
-4. Rebuild and restart
+- **type**: `telegram`
+- **terminology**: Telegram calls them "groups" and "chats." A "group" has multiple members; a "chat" is a 1:1 conversation with the bot.
+- **how-to-find-id**: Send a message in the group/chat, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` — the `chat.id` field is the platform ID. Group IDs are negative numbers.
+- **supports-threads**: no
+- **typical-use**: Interactive chat — direct messages or small groups
+- **default-isolation**: Same agent group if you're the only participant across multiple chats. Separate agent group if different people are in different groups.
