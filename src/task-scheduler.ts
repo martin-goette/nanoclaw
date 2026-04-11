@@ -2,7 +2,12 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  ASSISTANT_NAME,
+  SCHEDULER_POLL_INTERVAL,
+  SESSION_IDLE_TIMEOUT_MIN,
+  TIMEZONE,
+} from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -11,6 +16,7 @@ import {
 import {
   getAllTasks,
   getDueTasks,
+  getSessionMeta,
   getTaskById,
   logTaskRun,
   updateTask,
@@ -19,6 +25,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { shouldRotateSession } from './session-rotation.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -150,10 +157,32 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
-  // For group context mode, use the group's current session
-  const sessions = deps.getSessions();
-  const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
+  // For group context mode, reuse the group's current session — but only if
+  // it hasn't been idle long enough to risk inheriting sticky state from a
+  // prior turn (e.g. an MCP server marked offline via deferred_tools_delta).
+  // Mirrors the rotation check in src/index.ts runAgent so scheduled tasks
+  // get the same idle-rotation guarantee as interactive messages.
+  let sessionId: string | undefined;
+  if (task.context_mode === 'group') {
+    const meta = getSessionMeta(task.group_folder);
+    const rotate = shouldRotateSession(
+      meta?.lastTurnAt ?? null,
+      Date.now(),
+      SESSION_IDLE_TIMEOUT_MIN,
+    );
+    sessionId = rotate ? undefined : meta?.sessionId;
+    if (meta?.sessionId && rotate) {
+      logger.info(
+        {
+          taskId: task.id,
+          group: task.group_folder,
+          previousSessionId: meta.sessionId,
+          idleTimeoutMin: SESSION_IDLE_TIMEOUT_MIN,
+        },
+        'Rotating scheduled task session after idle timeout',
+      );
+    }
+  }
 
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait IDLE_TIMEOUT (30 min) for the
