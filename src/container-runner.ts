@@ -39,10 +39,7 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
  * Read .mcp.json from the project root and return its mcpServers map.
  * Returns an empty object if the file is missing or malformed.
  */
-function readMcpJson(): Record<
-  string,
-  { command: string; args?: string[]; env?: Record<string, string> }
-> {
+function readMcpJson(): Record<string, McpServerConfig> {
   const mcpJsonPath = path.join(process.cwd(), '.mcp.json');
   try {
     if (!fs.existsSync(mcpJsonPath)) return {};
@@ -57,6 +54,33 @@ function readMcpJson(): Record<
   }
 }
 
+/**
+ * MCP server configuration as written into the container's .mcp.json.
+ * Two transports are supported:
+ *
+ *   - stdio (default when `command` is present): Claude Code spawns the
+ *     command and talks to it over stdin/stdout. Used for per-container
+ *     servers like perplexity.
+ *   - streamable-http / sse (when `url` is present): Claude Code opens an
+ *     HTTP connection to an already-running server. Used for the persistent
+ *     google-workspace server that runs outside the container on 127.0.0.1.
+ */
+export type McpServerStdio = {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+export type McpServerHttp = {
+  type?: 'http' | 'sse';
+  url: string;
+  headers?: Record<string, string>;
+};
+export type McpServerConfig = McpServerStdio | McpServerHttp;
+
+export function isStdioMcpServer(s: McpServerConfig): s is McpServerStdio {
+  return 'command' in s;
+}
+
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -67,10 +91,7 @@ export interface ContainerInput {
   assistantName?: string;
   script?: string;
   model?: string;
-  mcpServers?: Record<
-    string,
-    { command: string; args?: string[]; env?: Record<string, string> }
-  >;
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface ContainerOutput {
@@ -311,16 +332,6 @@ function buildVolumeMounts(
     }
   }
 
-  // Google Workspace MCP OAuth token cache (shared across all groups)
-  const gwsMcpCreds = path.join(homeDir, '.google_workspace_mcp');
-  if (fs.existsSync(gwsMcpCreds)) {
-    mounts.push({
-      hostPath: gwsMcpCreds,
-      containerPath: '/home/node/.google_workspace_mcp',
-      readonly: false,
-    });
-  }
-
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -494,13 +505,15 @@ export async function runContainerAgent(
   const hasMcpServers = Object.keys(mergedMcpServers).length > 0;
 
   // Resolve MCP server env vars from .env and pass them into the container.
+  // Only stdio servers carry an env block; URL-transport servers pass through
+  // unchanged (they connect to an already-running process on the host).
   // Config env values may use ${VAR} syntax; resolve to actual values from .env.
   let mcpEnvVars: Record<string, string> | undefined;
   let resolvedServers = mergedMcpServers;
   if (hasMcpServers) {
     const envKeys = new Set<string>();
     for (const server of Object.values(mergedMcpServers)) {
-      if (!server.env) continue;
+      if (!isStdioMcpServer(server) || !server.env) continue;
       for (const [key, val] of Object.entries(server.env)) {
         envKeys.add(key);
         const match = val.match(/^\$\{(\w+)\}$/);
@@ -513,6 +526,10 @@ export async function runContainerAgent(
 
     const built: typeof mergedMcpServers = {};
     for (const [name, server] of Object.entries(mergedMcpServers)) {
+      if (!isStdioMcpServer(server)) {
+        built[name] = server;
+        continue;
+      }
       const resolvedEnv: Record<string, string> = {};
       if (server.env) {
         for (const [key, val] of Object.entries(server.env)) {

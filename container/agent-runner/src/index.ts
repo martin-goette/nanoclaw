@@ -36,7 +36,13 @@ interface ContainerInput {
   model?: string;
   mcpServers?: Record<
     string,
-    { command: string; args?: string[]; env?: Record<string, string> }
+    // Two transports are passed through verbatim to /workspace/group/.mcp.json:
+    //   - stdio: { command, args?, env? } — Claude Code spawns it.
+    //   - HTTP:  { type?, url, headers? } — Claude Code connects to an
+    //     already-running server (e.g. the host-side google-workspace MCP
+    //     bound to 127.0.0.1 over --network=host).
+    | { command: string; args?: string[]; env?: Record<string, string> }
+    | { type?: 'http' | 'sse'; url: string; headers?: Record<string, string> }
   >;
 }
 
