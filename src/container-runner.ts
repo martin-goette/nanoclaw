@@ -298,7 +298,7 @@ async function buildContainerArgs(
 
   args.push(
     '-c',
-    'cd /app && npx tsc --outDir /tmp/dist 2>&1 >&2 && ln -sf /app/node_modules /tmp/dist/node_modules && node /tmp/dist/index.js',
+    'cd /app && pnpm exec tsc --outDir /tmp/dist 2>&1 >&2 && ln -sf /app/node_modules /tmp/dist/node_modules && node /tmp/dist/index.js',
   );
 
   return args;
@@ -322,7 +322,7 @@ export async function buildAgentGroupImage(agentGroupId: string): Promise<void> 
     dockerfile += `RUN apt-get update && apt-get install -y ${aptPackages.join(' ')} && rm -rf /var/lib/apt/lists/*\n`;
   }
   if (npmPackages.length > 0) {
-    dockerfile += `RUN npm install -g ${npmPackages.join(' ')}\n`;
+    dockerfile += `RUN pnpm install -g ${npmPackages.join(' ')}\n`;
   }
   dockerfile += 'USER node\n';
 
