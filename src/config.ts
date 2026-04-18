@@ -65,10 +65,11 @@ export const MAX_MESSAGES_PER_PROMPT = Math.max(
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
 // Idle window after which an agent session is rotated (new SDK session started).
-// Bounds cache-read token growth on long-lived conversational agents.
+// With archive-on-rotation landing, rotation is lossless — so the default is
+// relaxed from the original 15 min (cost-focused) to 60 min (memory-focused).
 export const SESSION_IDLE_TIMEOUT_MIN = Math.max(
   1,
-  parseInt(process.env.SESSION_IDLE_TIMEOUT_MIN || '15', 10) || 15,
+  parseInt(process.env.SESSION_IDLE_TIMEOUT_MIN || '60', 10) || 60,
 );
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,

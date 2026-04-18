@@ -13,7 +13,10 @@ import {
   SESSION_IDLE_TIMEOUT_MIN,
   TIMEZONE,
 } from './config.js';
-import { shouldRotateSession } from './session-rotation.js';
+import {
+  archiveRotatedSession,
+  shouldRotateSession,
+} from './session-rotation.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -341,6 +344,9 @@ async function runAgent(
       },
       'Rotating agent session after idle timeout',
     );
+    // Fire-and-forget: archive the old session's transcript before the new
+    // session begins writing. Never blocks dispatch; any failure is logged.
+    void archiveRotatedSession(group.folder, storedSessionId, ASSISTANT_NAME);
   } else if (sessionId) {
     logger.debug({ group: group.name, sessionId }, 'Resuming agent session');
   }

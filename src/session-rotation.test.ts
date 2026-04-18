@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { shouldRotateSession } from './session-rotation.js';
+import {
+  archiveRotatedSession,
+  shouldRotateSession,
+} from './session-rotation.js';
 
 describe('shouldRotateSession', () => {
   const NOW = 1_000_000_000_000;
@@ -29,5 +35,91 @@ describe('shouldRotateSession', () => {
   it('respects a custom timeout', () => {
     expect(shouldRotateSession(NOW - 5 * MIN, NOW, 10)).toBe(false);
     expect(shouldRotateSession(NOW - 11 * MIN, NOW, 10)).toBe(true);
+  });
+});
+
+describe('archiveRotatedSession', () => {
+  let tmpRoot: string;
+  let dataDir: string;
+  let groupsDir: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'session-rotation-'));
+    dataDir = path.join(tmpRoot, 'data');
+    groupsDir = path.join(tmpRoot, 'groups');
+    vi.resetModules();
+    vi.doMock('./config.js', async () => {
+      const actual = await vi.importActual<typeof import('./config.js')>(
+        './config.js',
+      );
+      return { ...actual, DATA_DIR: dataDir, GROUPS_DIR: groupsDir };
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    vi.doUnmock('./config.js');
+  });
+
+  it('archives the transcript at the expected host path to the group conversations dir', async () => {
+    const { archiveRotatedSession: archiveFn } = await import(
+      './session-rotation.js'
+    );
+    const groupFolder = 'slack_test';
+    const sessionId = 'abc-123';
+    const transcriptDir = path.join(
+      dataDir,
+      'sessions',
+      groupFolder,
+      '.claude',
+      'projects',
+      '-workspace-group',
+    );
+    fs.mkdirSync(transcriptDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(transcriptDir, `${sessionId}.jsonl`),
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: 'hi' },
+      }) + '\n',
+    );
+
+    await archiveFn(groupFolder, sessionId, 'Dana');
+
+    const conversationsDir = path.join(groupsDir, groupFolder, 'conversations');
+    const files = fs.readdirSync(conversationsDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}-.+\.md$/);
+    const body = fs.readFileSync(path.join(conversationsDir, files[0]), 'utf-8');
+    expect(body).toContain('**User**: hi');
+  });
+
+  it('does not throw when the transcript is missing', async () => {
+    const { archiveRotatedSession: archiveFn } = await import(
+      './session-rotation.js'
+    );
+    await expect(
+      archiveFn('nonexistent_group', 'nope-session', 'Dana'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('does not throw when the transcript is empty', async () => {
+    const { archiveRotatedSession: archiveFn } = await import(
+      './session-rotation.js'
+    );
+    const groupFolder = 'slack_empty';
+    const transcriptDir = path.join(
+      dataDir,
+      'sessions',
+      groupFolder,
+      '.claude',
+      'projects',
+      '-workspace-group',
+    );
+    fs.mkdirSync(transcriptDir, { recursive: true });
+    fs.writeFileSync(path.join(transcriptDir, `s.jsonl`), '');
+    await expect(
+      archiveFn(groupFolder, 's', 'Dana'),
+    ).resolves.toBeUndefined();
   });
 });

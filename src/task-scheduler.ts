@@ -25,7 +25,10 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { shouldRotateSession } from './session-rotation.js';
+import {
+  archiveRotatedSession,
+  shouldRotateSession,
+} from './session-rotation.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -180,6 +183,12 @@ async function runTask(
           idleTimeoutMin: SESSION_IDLE_TIMEOUT_MIN,
         },
         'Rotating scheduled task session after idle timeout',
+      );
+      // Fire-and-forget archive of the old session before rotation.
+      void archiveRotatedSession(
+        task.group_folder,
+        meta.sessionId,
+        ASSISTANT_NAME,
       );
     }
   }

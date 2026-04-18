@@ -48,6 +48,7 @@ interface ContainerInput {
 
 const HAIKU = 'claude-haiku-4-5-20251001';
 const SONNET = 'claude-sonnet-4-6';
+const SONNET_1M = 'claude-sonnet-4-6[1m]';
 const OPUS = 'claude-opus-4-6';
 
 // Patterns that indicate a simple relay message (no deep reasoning needed)
@@ -60,12 +61,15 @@ const SIMPLE_REMINDER_PATTERNS = [
   /^Remind \w+ /i,
 ];
 
-const VALID_MODELS = new Set([HAIKU, SONNET, OPUS]);
+const VALID_MODELS = new Set([HAIKU, SONNET, SONNET_1M, OPUS]);
 
 function selectModel(input: ContainerInput): string {
-  // 1. Explicit model override from host — always respect (if valid)
+  // 1. Explicit model override from host — always respect (if valid).
+  //    Unknown models fall back to the 1M-context default (not plain 200k),
+  //    since interactive traffic benefits from the larger window combined
+  //    with CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000.
   if (input.model) {
-    return VALID_MODELS.has(input.model) ? input.model : SONNET;
+    return VALID_MODELS.has(input.model) ? input.model : SONNET_1M;
   }
 
   // 2. Simple reminders → Haiku (just echo a message, no tools needed)
@@ -77,8 +81,10 @@ function selectModel(input: ContainerInput): string {
     }
   }
 
-  // 3. Default → Sonnet
-  return SONNET;
+  // 3. Default → Sonnet with 1M context. Auto-compact at 200k still applies
+  //    (set via CLAUDE_CODE_AUTO_COMPACT_WINDOW), so cost is capped while the
+  //    larger ceiling avoids hard context exhaustion mid-session.
+  return SONNET_1M;
 }
 
 interface ContainerOutput {
