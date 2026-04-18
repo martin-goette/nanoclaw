@@ -64,9 +64,7 @@ describe('parseTranscript', () => {
         message: { role: 'user', content: 'ok' },
       }),
     ].join('\n');
-    expect(parseTranscript(jsonl)).toEqual([
-      { role: 'user', content: 'ok' },
-    ]);
+    expect(parseTranscript(jsonl)).toEqual([{ role: 'user', content: 'ok' }]);
   });
 
   it('returns empty array for empty input', () => {

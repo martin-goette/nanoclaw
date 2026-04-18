@@ -15,6 +15,7 @@ import {
 } from './config.js';
 import {
   archiveRotatedSession,
+  awaitPendingArchives,
   shouldRotateSession,
 } from './session-rotation.js';
 import { startCredentialProxy } from './credential-proxy.js';
@@ -605,6 +606,9 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
     await queue.shutdown(10000);
+    // Drain any in-flight archive-on-rotation writes so process.exit doesn't
+    // abort a half-written conversation archive file.
+    await awaitPendingArchives(5000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };

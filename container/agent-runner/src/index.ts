@@ -179,6 +179,13 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
+// KEEP-IN-SYNC with src/conversation-archive.ts (host-side mirror used by
+// archive-on-rotation). The next four helpers (getSessionSummary,
+// createPreCompactHook, sanitizeFilename, generateFallbackName) and the
+// parseTranscript / formatTranscriptMarkdown helpers below have host-side
+// counterparts. If you change the markdown format or filename rules here,
+// mirror the change in the host module so compaction archives and rotation
+// archives stay visually identical.
 function getSessionSummary(
   sessionId: string,
   transcriptPath: string,

@@ -26,15 +26,31 @@ export function shouldRotateSession(
   return now - lastTurnAt > timeoutMin * 60_000;
 }
 
+// In-flight archive promises, tracked so the shutdown handler can await them
+// instead of letting process.exit(0) cancel a half-written archive file.
+const pendingArchives = new Set<Promise<void>>();
+
 /**
  * Archive the about-to-be-rotated session's transcript to the group's
  * conversations/ folder so the `PreCompact` hook's archive behaviour is
  * preserved when rotation (not compaction) is what ends the session.
  *
  * Fire-and-forget: never throws to the caller. Archive failure is logged
- * but must not block dispatch of the new session.
+ * but must not block dispatch of the new session. Shutdown handlers should
+ * call `awaitPendingArchives()` to drain in-flight work before exiting.
  */
-export async function archiveRotatedSession(
+export function archiveRotatedSession(
+  groupFolder: string,
+  oldSessionId: string,
+  assistantName?: string,
+): Promise<void> {
+  const p = runArchive(groupFolder, oldSessionId, assistantName);
+  pendingArchives.add(p);
+  void p.finally(() => pendingArchives.delete(p));
+  return p;
+}
+
+async function runArchive(
   groupFolder: string,
   oldSessionId: string,
   assistantName?: string,
@@ -49,11 +65,19 @@ export async function archiveRotatedSession(
       '-workspace-group',
       `${oldSessionId}.jsonl`,
     );
-    const conversationsDir = path.join(GROUPS_DIR, groupFolder, 'conversations');
-    const result = archiveTranscriptFromPath(transcriptPath, conversationsDir, {
-      sessionId: oldSessionId,
-      assistantName,
-    });
+    const conversationsDir = path.join(
+      GROUPS_DIR,
+      groupFolder,
+      'conversations',
+    );
+    const result = archiveTranscriptFromPath(
+      transcriptPath,
+      conversationsDir,
+      {
+        sessionId: oldSessionId,
+        assistantName,
+      },
+    );
     if ('archivedTo' in result) {
       logger.info(
         { group: groupFolder, archivedTo: result.archivedTo },
@@ -75,4 +99,22 @@ export async function archiveRotatedSession(
       'Archive-on-rotation failed',
     );
   }
+}
+
+/**
+ * Wait for any in-flight `archiveRotatedSession` calls to settle. Called
+ * from the shutdown handler so a SIGTERM arriving just after a rotation
+ * doesn't abort an in-flight archive write via `process.exit(0)`.
+ *
+ * Resolves when all archives settle, or when `timeoutMs` elapses — whichever
+ * comes first. Default timeout is 5 seconds, short enough not to delay
+ * shutdown materially, long enough for realistic disk writes.
+ */
+export async function awaitPendingArchives(
+  timeoutMs: number = 5000,
+): Promise<void> {
+  if (pendingArchives.size === 0) return;
+  const drained = Promise.allSettled(Array.from(pendingArchives));
+  const timer = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
+  await Promise.race([drained, timer]);
 }
