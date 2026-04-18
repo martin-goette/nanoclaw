@@ -19,7 +19,7 @@
  */
 import { OneCLI, type ApprovalRequest, type ManualApprovalHandle } from '@onecli-sh/sdk';
 
-import { pickApprovalDelivery, pickApprover } from '../../access.js';
+import { pickApprovalDelivery, pickApprover } from './primitive.js';
 import { ONECLI_URL } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import {
