@@ -302,9 +302,13 @@ function updateStagedCredentials(credentialsPath: string): void {
     const staged = path.join(credDir, group, '.credentials.json');
     try {
       if (fs.existsSync(staged)) {
-        const tmpPath = staged + '.tmp';
-        fs.writeFileSync(tmpPath, source, { mode: 0o600 });
-        fs.renameSync(tmpPath, staged);
+        // Write in-place (truncate + write) instead of atomic rename.
+        // Docker bind-mounts bind to the inode; rename() creates a new
+        // inode so the container still sees the stale file.  In-place
+        // write preserves the inode so running containers see the update.
+        const fd = fs.openSync(staged, 'w', 0o600);
+        fs.writeSync(fd, source);
+        fs.closeSync(fd);
       }
     } catch (err) {
       logger.warn({ err, group }, 'Failed to update staged credentials');
