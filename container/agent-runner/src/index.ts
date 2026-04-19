@@ -62,6 +62,25 @@ const SIMPLE_REMINDER_PATTERNS = [
 ];
 
 const VALID_MODELS = new Set([HAIKU, SONNET, SONNET_1M, OPUS]);
+const MODEL_SWITCH_FILE = '/workspace/ipc/model';
+
+/** Check if the agent requested a model switch via the set_model MCP tool. */
+function checkModelSwitch(currentModel: string): string {
+  try {
+    if (!fs.existsSync(MODEL_SWITCH_FILE)) return currentModel;
+    const raw = fs.readFileSync(MODEL_SWITCH_FILE, 'utf-8').trim();
+    fs.unlinkSync(MODEL_SWITCH_FILE);
+    // Map plain sonnet to 1M variant for interactive sessions
+    const newModel = raw === SONNET ? SONNET_1M : raw;
+    if (VALID_MODELS.has(newModel) && newModel !== currentModel) {
+      log(`Model switched: ${currentModel} → ${newModel}`);
+      return newModel;
+    }
+    return currentModel;
+  } catch {
+    return currentModel;
+  }
+}
 
 function selectModel(input: ContainerInput): string {
   // 1. Explicit model override from host — always respect (if valid).
@@ -749,9 +768,9 @@ async function main(): Promise<void> {
     prompt = `[SCHEDULED TASK]\n\nScript output:\n${JSON.stringify(scriptResult.data, null, 2)}\n\nInstructions:\n${containerInput.prompt}`;
   }
 
-  // Select model once for the entire container session
-  const selectedModel = selectModel(containerInput);
-  log(`Selected model: ${selectedModel}`);
+  // Select initial model — may be changed mid-session via set_model tool
+  let currentModel = selectModel(containerInput);
+  log(`Selected model: ${currentModel}`);
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
@@ -767,7 +786,7 @@ async function main(): Promise<void> {
         mcpServerPath,
         containerInput,
         sdkEnv,
-        selectedModel,
+        currentModel,
         resumeAt,
       );
       if (queryResult.newSessionId) {
@@ -784,6 +803,9 @@ async function main(): Promise<void> {
         log('Close sentinel consumed during query, exiting');
         break;
       }
+
+      // Check if agent requested a model switch during this query
+      currentModel = checkModelSwitch(currentModel);
 
       // Emit session update so host can track it
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
@@ -813,7 +835,7 @@ async function main(): Promise<void> {
           mcpServerPath,
           containerInput,
           sdkEnv,
-          selectedModel,
+          currentModel,
           resumeAt,
         );
         log('State saved successfully');

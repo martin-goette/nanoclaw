@@ -463,6 +463,28 @@ server.tool(
 );
 
 server.tool(
+  'set_model',
+  'Switch the AI model for subsequent turns. Use "opus" for complex reasoning, "sonnet" for general tasks, "haiku" for simple relays. Changes take effect on the next turn.',
+  {
+    model: z
+      .enum(['haiku', 'sonnet', 'opus'])
+      .describe('Model to switch to'),
+  },
+  async (args) => {
+    const resolved = MODEL_MAP[args.model];
+    fs.writeFileSync(path.join(IPC_DIR, 'model'), resolved, { mode: 0o644 });
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Model set to ${args.model} (${resolved}). Takes effect next turn.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.
 
