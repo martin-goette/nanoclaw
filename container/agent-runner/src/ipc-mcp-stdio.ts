@@ -484,6 +484,98 @@ server.tool(
   },
 );
 
+// --- Audio transcription ---
+
+const SUPPORTED_AUDIO_EXTS = new Set(['m4a', 'mp3', 'ogg', 'opus', 'wav', 'webm']);
+const AUDIO_MIME: Record<string, string> = {
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  opus: 'audio/opus',
+  wav: 'audio/wav',
+  webm: 'audio/webm',
+};
+const MAX_AUDIO_SIZE = 25 * 1024 * 1024; // 25 MB (OpenAI limit)
+
+let openaiClient: import('openai').default | null = null;
+
+function getOpenAIClient(): import('openai').default | null {
+  if (openaiClient) return openaiClient;
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  const OpenAI = require('openai').default;
+  openaiClient = new OpenAI({ apiKey: key });
+  return openaiClient;
+}
+
+server.tool(
+  'transcribe_audio',
+  'Transcribe an audio file to text using OpenAI Whisper. Accepts file paths from /workspace/group/attachments/. Supports m4a, mp3, ogg, opus, wav, webm.',
+  {
+    file_path: z
+      .string()
+      .describe('Absolute path to the audio file (e.g. /workspace/group/attachments/1234-clip.m4a)'),
+  },
+  async (args) => {
+    const openai = getOpenAIClient();
+    if (!openai) {
+      return {
+        content: [{ type: 'text' as const, text: 'Audio transcription is not configured — OPENAI_API_KEY is not set.' }],
+        isError: true,
+      };
+    }
+
+    const filePath = args.file_path;
+    if (!fs.existsSync(filePath)) {
+      return {
+        content: [{ type: 'text' as const, text: `File not found: ${filePath}` }],
+        isError: true,
+      };
+    }
+
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    if (!SUPPORTED_AUDIO_EXTS.has(ext)) {
+      return {
+        content: [{ type: 'text' as const, text: `Unsupported audio format: .${ext}. Supported: ${[...SUPPORTED_AUDIO_EXTS].join(', ')}` }],
+        isError: true,
+      };
+    }
+
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_AUDIO_SIZE) {
+      return {
+        content: [{ type: 'text' as const, text: `File too large (${Math.round(stat.size / 1024 / 1024)}MB). Maximum: 25MB.` }],
+        isError: true,
+      };
+    }
+
+    try {
+      const buffer = fs.readFileSync(filePath);
+      const mime = AUDIO_MIME[ext] || 'audio/mp4';
+      const file = new File([buffer], path.basename(filePath), { type: mime });
+      const model = process.env.TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
+
+      const response = await openai.audio.transcriptions.create({ model, file });
+      const text = response.text?.trim();
+
+      if (!text) {
+        return {
+          content: [{ type: 'text' as const, text: 'Transcription returned empty text — the audio may be silent or too short.' }],
+        };
+      }
+
+      return {
+        content: [{ type: 'text' as const, text }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Transcription failed: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.

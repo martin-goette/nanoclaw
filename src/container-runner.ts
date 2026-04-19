@@ -410,6 +410,15 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Pass OpenAI API key for container-side audio transcription (Whisper)
+  const whisperEnv = readEnvFile(['OPENAI_API_KEY', 'TRANSCRIPTION_MODEL']);
+  if (whisperEnv.OPENAI_API_KEY) {
+    args.push('-e', `OPENAI_API_KEY=${whisperEnv.OPENAI_API_KEY}`);
+    if (whisperEnv.TRANSCRIPTION_MODEL) {
+      args.push('-e', `TRANSCRIPTION_MODEL=${whisperEnv.TRANSCRIPTION_MODEL}`);
+    }
+  }
+
   // Pass MCP server env vars (resolved from .env) into the container
   if (mcpEnvVars) {
     for (const [key, value] of Object.entries(mcpEnvVars)) {
