@@ -110,7 +110,15 @@ async function spawnContainer(session: Session): Promise<void> {
   // OneCLI agent identifier is always the agent group id — stable across
   // sessions and reversible via getAgentGroup() for approval routing.
   const agentIdentifier = agentGroup.id;
-  const args = await buildContainerArgs(mounts, containerName, agentGroup, containerConfig, provider, contribution, agentIdentifier);
+  const args = await buildContainerArgs(
+    mounts,
+    containerName,
+    agentGroup,
+    containerConfig,
+    provider,
+    contribution,
+    agentIdentifier,
+  );
 
   log.info('Spawning container', { sessionId: session.id, agentGroup: agentGroup.name, containerName });
 
@@ -263,10 +271,7 @@ function buildMounts(
  * selection. Each symlink points to a container path (/app/skills/<name>)
  * so it's dangling on the host but valid inside the container.
  */
-function syncSkillSymlinks(
-  claudeDir: string,
-  containerConfig: import('./container-config.js').ContainerConfig,
-): void {
+function syncSkillSymlinks(claudeDir: string, containerConfig: import('./container-config.js').ContainerConfig): void {
   const skillsDir = path.join(claudeDir, 'skills');
   if (!fs.existsSync(skillsDir)) {
     fs.mkdirSync(skillsDir, { recursive: true });

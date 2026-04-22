@@ -9,10 +9,7 @@
  */
 import { getDb, hasTable } from './db/connection.js';
 
-export type GateResult =
-  | { action: 'pass' }
-  | { action: 'filter' }
-  | { action: 'deny'; command: string };
+export type GateResult = { action: 'pass' } | { action: 'filter' } | { action: 'deny'; command: string };
 
 const FILTERED_COMMANDS = new Set(['/help', '/login', '/logout', '/doctor', '/config', '/remote-control']);
 const ADMIN_COMMANDS = new Set(['/clear', '/compact', '/context', '/cost', '/files']);
@@ -23,11 +20,7 @@ const ADMIN_COMMANDS = new Set(['/clear', '/compact', '/context', '/cost', '/fil
  * 'filter' for silently-dropped commands, 'deny' for unauthorized
  * admin commands.
  */
-export function gateCommand(
-  content: string,
-  userId: string | null,
-  agentGroupId: string,
-): GateResult {
+export function gateCommand(content: string, userId: string | null, agentGroupId: string): GateResult {
   let text: string;
   try {
     const parsed = JSON.parse(content);
