@@ -29,8 +29,7 @@
 import type Database from 'better-sqlite3';
 import fs from 'fs';
 
-import { archiveSession } from './conversation-archive.js';
-import { getActiveSessions, updateSession } from './db/sessions.js';
+import { getActiveSessions } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import {
   countDueMessages,
@@ -52,12 +51,6 @@ const SWEEP_INTERVAL_MS = 60_000;
 // been touched in this long, the container is either stuck or doing genuinely
 // nothing — kill and restart on the next inbound.
 export const ABSOLUTE_CEILING_MS = 30 * 60 * 1000;
-// Idle session rotation. After this long with no user-driven turn (chat or
-// task message), close+archive the session. The next inbound on the same
-// (mg, thread) opens a fresh session. Mirrors v1's SESSION_IDLE_TIMEOUT_MIN.
-export const SESSION_IDLE_MS = 60 * 60 * 1000;
-// Schedule sessions hold long-running scheduled tasks; they're never rotated.
-const SCHEDULE_THREAD_ID = 'schedule';
 // Stuck tolerance window applied per 'processing' claim — "did we see any
 // signs of life since this message was claimed?"
 export const CLAIM_STUCK_MS = 60 * 1000;
@@ -191,26 +184,18 @@ async function sweepSession(session: Session): Promise<void> {
     await handleRecurrence(inDb, session);
     // MODULE-HOOK:scheduling-recurrence:end
 
-    // 6. Idle session rotation. Fresh-session-on-next-inbound, transcript archived.
-    // Schedule sessions are exempt — they're long-running by design.
-    if (
-      session.thread_id !== SCHEDULE_THREAD_ID &&
-      !alive &&
-      session.last_turn_at &&
-      Date.now() - Date.parse(session.last_turn_at) > SESSION_IDLE_MS
-    ) {
-      log.info('Rotating idle session', {
-        sessionId: session.id,
-        agentGroupId: agentGroup.id,
-        idleMs: Date.now() - Date.parse(session.last_turn_at),
-      });
-      try {
-        archiveSession(agentGroup.id, session.id, 'idle');
-      } catch (err) {
-        log.warn('Archive failed; rotating session anyway', { sessionId: session.id, err: (err as Error).message });
-      }
-      updateSession(session.id, { status: 'archived' });
-    }
+    // 6. Idle session rotation — DISABLED.
+    //
+    // Previously rotated any non-schedule session idle >60min into 'archived'
+    // status. We now keep per-thread sessions alive indefinitely so that
+    // replying in an old Slack thread retains full conversation context (the
+    // SDK's continuation-id resumes the same conversation). With 1M-context
+    // Sonnet as the default and auto-compact at 200k tokens, runaway context
+    // size is no longer a concern that rotation needs to mitigate.
+    //
+    // The `last_turn_at` column and `archiveSession()` helper remain in the
+    // codebase for explicit manual archiving (e.g. an admin-triggered
+    // /archive command), should that be useful later.
   } finally {
     inDb.close();
     outDb?.close();
