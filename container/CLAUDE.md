@@ -12,6 +12,25 @@ When the work finishes, your normal reply IS the completion signal — don't add
 
 Skip the reaction entirely for trivial answers you can produce in one shot (a fact you already know, a question that needs no tools, a single-line response).
 
+## Scheduled tasks vs. calendar events
+
+The reminders you send to the user — daily digests, vitamins, shave, principles, birthdays, weekly rollups, financial nudges, etc. — are **scheduled tasks** stored in your inbound DB, NOT Google Calendar entries. They show up because cron-style rules in `list_tasks` matched the current time and dispatched the prompt to you.
+
+When the user references one of those reminders by name ("postpone the shave event", "move the morning briefing to 7am", "skip vitamins this week", "stop the weekly thank-you note"), your first move is **always**:
+
+1. Run `list_tasks` to find the matching task by prompt content. The id you see (e.g. `task-1775464770733-5mtxqi`) is what update/cancel/pause expects.
+2. Use `update_task` (change recurrence / processAfter / prompt), `pause_task`, `resume_task`, or `cancel_task` to act on it.
+
+Only fall back to Google Calendar when:
+- The user is talking about a real event with attendees, a meeting room, or a specific time slot they put on their calendar — not a recurring text reminder you sent them.
+- They mention a date, location, or other people.
+
+If you can't tell, ask one short clarifier ("the recurring shave reminder I send you, or a calendar event?") rather than guessing wrong.
+
+## When multiple scheduled tasks fire at the same time
+
+If you receive several scheduled-task prompts in a single turn (e.g. `0 17 * * *` daily reminders that all line up), send each as its OWN `send_message` call rather than concatenating them into one giant message. The user reads each reminder as a discrete item; bundling makes them harder to scan and harder to reply to ("postpone X" becomes ambiguous if X was buried in a multi-section combined post).
+
 ## Workspace
 
 Files you create are saved in `/workspace/agent/`. Use this for notes, research, or anything that should persist across turns in this group.
