@@ -270,7 +270,14 @@ function createAdapter(): ChannelAdapter | null {
         if (eventType === 'message' || eventType === 'app_mention') {
           if (typeof payload!.ts === 'string' && typeof payload!.channel === 'string') {
             const subtype = typeof payload!.subtype === 'string' ? payload!.subtype : undefined;
-            if (!subtype || subtype === 'thread_broadcast') {
+            // Allowed subtypes:
+            //   - undefined: plain text message
+            //   - 'thread_broadcast': reply also posted to channel
+            //   - 'file_share': message with attached file(s) — voice notes,
+            //     images, docs. Without this, audio messages drop silently.
+            // Skipped: 'message_changed', 'message_deleted', 'channel_join',
+            //   bot subtypes — those are noise we don't want to dispatch.
+            if (!subtype || subtype === 'thread_broadcast' || subtype === 'file_share') {
               const text = typeof payload!.text === 'string' ? payload!.text : '';
               const userId = typeof payload!.user === 'string' ? payload!.user : undefined;
               const threadTs = typeof payload!.thread_ts === 'string' ? payload!.thread_ts : undefined;
