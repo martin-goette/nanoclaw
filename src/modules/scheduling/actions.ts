@@ -10,11 +10,34 @@
 import type Database from 'better-sqlite3';
 
 import { wakeContainer } from '../../container-runner.js';
-import { getSession } from '../../db/sessions.js';
+import { getSession, getSessionsByAgentGroup } from '../../db/sessions.js';
 import { log } from '../../log.js';
-import { writeSessionMessage } from '../../session-manager.js';
+import { openInboundDb, writeSessionMessage } from '../../session-manager.js';
 import type { Session } from '../../types.js';
 import { cancelTask, insertTask, pauseTask, resumeTask, updateTask, type TaskUpdate } from './db.js';
+
+/**
+ * If a mutation didn't match any rows in the current session's inbound.db,
+ * fall back to the agent group's schedule session. Long-lived scheduled
+ * tasks live there (thread_id='schedule'), and the per-thread chat session
+ * the agent runs in doesn't see them. Returns the schedule session's DB
+ * (caller must close) or null when none exists.
+ */
+function openScheduleInboundIfDifferent(session: Session): Database.Database | null {
+  if (session.thread_id === 'schedule') return null;
+  const sessions = getSessionsByAgentGroup(session.agent_group_id);
+  const sched = sessions.find((s) => s.thread_id === 'schedule' && s.status === 'active');
+  if (!sched || sched.id === session.id) return null;
+  try {
+    return openInboundDb(session.agent_group_id, sched.id);
+  } catch (err) {
+    log.warn('schedule fallback: cannot open schedule inbound.db', {
+      agentGroupId: session.agent_group_id,
+      err: (err as Error).message,
+    });
+    return null;
+  }
+}
 
 export async function handleScheduleTask(
   content: Record<string, unknown>,
@@ -41,32 +64,53 @@ export async function handleScheduleTask(
 
 export async function handleCancelTask(
   content: Record<string, unknown>,
-  _session: Session,
+  session: Session,
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  cancelTask(inDb, taskId);
-  log.info('Task cancelled', { taskId });
+  let touched = cancelTask(inDb, taskId);
+  if (touched === 0) {
+    const sched = openScheduleInboundIfDifferent(session);
+    if (sched) {
+      try { touched = cancelTask(sched, taskId); } finally { sched.close(); }
+      if (touched > 0) log.info('Task cancelled in schedule session', { taskId });
+    }
+  }
+  log.info('Task cancelled', { taskId, touched });
 }
 
 export async function handlePauseTask(
   content: Record<string, unknown>,
-  _session: Session,
+  session: Session,
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  pauseTask(inDb, taskId);
-  log.info('Task paused', { taskId });
+  let touched = pauseTask(inDb, taskId);
+  if (touched === 0) {
+    const sched = openScheduleInboundIfDifferent(session);
+    if (sched) {
+      try { touched = pauseTask(sched, taskId); } finally { sched.close(); }
+      if (touched > 0) log.info('Task paused in schedule session', { taskId });
+    }
+  }
+  log.info('Task paused', { taskId, touched });
 }
 
 export async function handleResumeTask(
   content: Record<string, unknown>,
-  _session: Session,
+  session: Session,
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  resumeTask(inDb, taskId);
-  log.info('Task resumed', { taskId });
+  let touched = resumeTask(inDb, taskId);
+  if (touched === 0) {
+    const sched = openScheduleInboundIfDifferent(session);
+    if (sched) {
+      try { touched = resumeTask(sched, taskId); } finally { sched.close(); }
+      if (touched > 0) log.info('Task resumed in schedule session', { taskId });
+    }
+  }
+  log.info('Task resumed', { taskId, touched });
 }
 
 export async function handleUpdateTask(
@@ -84,7 +128,14 @@ export async function handleUpdateTask(
   if (content.script === null || typeof content.script === 'string') {
     update.script = content.script as string | null;
   }
-  const touched = updateTask(inDb, taskId, update);
+  let touched = updateTask(inDb, taskId, update);
+  if (touched === 0) {
+    const sched = openScheduleInboundIfDifferent(session);
+    if (sched) {
+      try { touched = updateTask(sched, taskId, update); } finally { sched.close(); }
+      if (touched > 0) log.info('Task updated in schedule session', { taskId, fields: Object.keys(update) });
+    }
+  }
   log.info('Task updated', { taskId, touched, fields: Object.keys(update) });
   if (touched === 0) {
     // Notify the agent that update_task matched nothing. Replicates the
