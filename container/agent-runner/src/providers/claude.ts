@@ -227,7 +227,15 @@ function createPreCompactHook(assistantName?: string): HookCallback {
  * Claude Code auto-compacts context at this window (tokens). Kept here so
  * the generic bootstrap doesn't need to know about Claude-specific env vars.
  */
-const CLAUDE_CODE_AUTO_COMPACT_WINDOW = '165000';
+// Auto-compact at 200k tokens. With 1M-context Sonnet (set as DEFAULT_MODEL),
+// this caps cost while the larger ceiling avoids hard context exhaustion
+// mid-session. Mirrors v1's setting.
+const CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000';
+
+// 1M-context Sonnet by default. The `[1m]` suffix opts the SDK into the
+// extended-context beta. Mirrors v1's interactive-default. Per-session
+// overrides could later land via the agent_provider field on sessions.
+const DEFAULT_MODEL = 'claude-sonnet-4-6[1m]';
 
 /**
  * Stale-session detection. Matches Claude Code's error text when a
@@ -272,6 +280,7 @@ export class ClaudeProvider implements AgentProvider {
         additionalDirectories: this.additionalDirectories,
         resume: input.continuation,
         pathToClaudeCodeExecutable: '/pnpm/claude',
+        model: DEFAULT_MODEL,
         systemPrompt: instructions ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions } : undefined,
         allowedTools: TOOL_ALLOWLIST,
         disallowedTools: SDK_DISALLOWED_TOOLS,

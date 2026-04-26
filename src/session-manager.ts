@@ -115,6 +115,7 @@ export function resolveSession(
     status: 'active',
     container_status: 'stopped',
     last_active: null,
+    last_turn_at: null,
     created_at: new Date().toISOString(),
   };
 
@@ -226,7 +227,13 @@ export function writeSessionMessage(
     db.close();
   }
 
-  updateSession(sessionId, { last_active: new Date().toISOString() });
+  // last_turn_at tracks user-driven activity (chat + task triggers); host-sweep
+  // uses it for idle rotation. last_active separately tracks any session
+  // activity including container wakes, which we don't want to count as a
+  // "turn" for rotation purposes.
+  const now = new Date().toISOString();
+  const isUserTurn = message.kind === 'chat' || message.kind === 'task';
+  updateSession(sessionId, isUserTurn ? { last_active: now, last_turn_at: now } : { last_active: now });
 }
 
 /**

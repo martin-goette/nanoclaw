@@ -306,6 +306,7 @@ describe('sessions', () => {
     status: 'active' as const,
     container_status: 'stopped' as const,
     last_active: null,
+    last_turn_at: null,
     created_at: now(),
   });
 
@@ -389,6 +390,7 @@ describe('pending questions', () => {
       status: 'active',
       container_status: 'stopped',
       last_active: null,
+      last_turn_at: null,
       created_at: now(),
     });
   });

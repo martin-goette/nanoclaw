@@ -105,9 +105,13 @@ export interface Session {
   messaging_group_id: string | null;
   thread_id: string | null;
   agent_provider: string | null;
-  status: 'active' | 'closed';
+  status: 'active' | 'closed' | 'archived';
   container_status: 'running' | 'idle' | 'stopped';
   last_active: string | null;
+  /** Wall-clock time of the last user turn routed into this session.
+   *  Distinct from last_active (touched on every container wake). Idle
+   *  rotation in host-sweep keys off this. */
+  last_turn_at: string | null;
   created_at: string;
 }
 
