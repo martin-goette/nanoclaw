@@ -111,7 +111,6 @@ export const listTasks: McpToolDefinition = {
   },
   async handler(args) {
     const status = args.status as string | undefined;
-    const db = getInboundDb();
     // One row per series — the live (pending or paused) occurrence. Recurring
     // tasks accumulate one completed row per firing plus one live follow-up;
     // exposing the whole pile to the agent is noisy and confuses task identity
@@ -120,35 +119,63 @@ export const listTasks: McpToolDefinition = {
     // SQLite quirk: when MAX(seq) appears in the SELECT list of a GROUP BY
     // query, the bare columns take values from the row that contains that max
     // — that's how we pick "the latest live row per series" in one pass.
-    let rows;
-    if (status) {
-      rows = db
-        .prepare(
-          `SELECT series_id AS id, status, process_after, recurrence, content, MAX(seq) AS _seq
-             FROM messages_in
-            WHERE kind = 'task' AND status = ?
-            GROUP BY series_id
-            ORDER BY process_after ASC`,
-        )
-        .all(status);
-    } else {
-      rows = db
-        .prepare(
-          `SELECT series_id AS id, status, process_after, recurrence, content, MAX(seq) AS _seq
-             FROM messages_in
-            WHERE kind = 'task' AND status IN ('pending', 'paused')
-            GROUP BY series_id
-            ORDER BY process_after ASC`,
-        )
-        .all();
+    const statusClause = status ? 'status = ?' : "status IN ('pending', 'paused')";
+    const sql = `SELECT series_id AS id, status, process_after, recurrence, content, MAX(seq) AS _seq
+                   FROM messages_in
+                  WHERE kind = 'task' AND ${statusClause}
+                  GROUP BY series_id
+                  ORDER BY process_after ASC`;
+
+    type Row = { id: string; status: string; process_after: string | null; recurrence: string | null; content: string };
+    const rows: Array<Row & { _source: 'session' | 'schedule' }> = [];
+    const seenIds = new Set<string>();
+
+    // Current session's tasks first.
+    const sessionRows = (status
+      ? getInboundDb().prepare(sql).all(status)
+      : getInboundDb().prepare(sql).all()) as Row[];
+    for (const r of sessionRows) {
+      seenIds.add(r.id);
+      rows.push({ ...r, _source: 'session' });
     }
 
-    if ((rows as unknown[]).length === 0) return ok('No tasks found.');
+    // Long-lived scheduled tasks live in the agent's schedule session, mounted
+    // read-only at /workspace/schedule.inbound.db when the host detects one.
+    // Without this, a per-thread chat session would see no tasks even though
+    // the cron-driven schedule has plenty queued up.
+    const fs = await import('fs');
+    const SCHEDULE_DB_PATH = '/workspace/schedule.inbound.db';
+    if (fs.existsSync(SCHEDULE_DB_PATH)) {
+      try {
+        const { Database } = await import('bun:sqlite');
+        const sched = new Database(SCHEDULE_DB_PATH, { readonly: true });
+        try {
+          const schedRows = (status
+            ? sched.prepare(sql).all(status)
+            : sched.prepare(sql).all()) as Row[];
+          for (const r of schedRows) {
+            // De-dup by series id in case the same task somehow lives in
+            // both DBs — current-session row wins, since the agent can
+            // mutate it directly.
+            if (!seenIds.has(r.id)) rows.push({ ...r, _source: 'schedule' });
+          }
+        } finally {
+          sched.close();
+        }
+      } catch (err) {
+        log(`schedule-db query failed: ${(err as Error).message}`);
+      }
+    }
 
-    const lines = (rows as Array<{ id: string; status: string; process_after: string | null; recurrence: string | null; content: string }>).map((r) => {
+    if (rows.length === 0) return ok('No tasks found.');
+
+    rows.sort((a, b) => (a.process_after || '').localeCompare(b.process_after || ''));
+
+    const lines = rows.map((r) => {
       const content = JSON.parse(r.content);
       const prompt = (content.prompt as string || '').slice(0, 80);
-      return `- ${r.id} [${r.status}] at=${r.process_after || 'now'} ${r.recurrence ? `recur=${r.recurrence} ` : ''}→ ${prompt}`;
+      const tag = r._source === 'schedule' ? ' [schedule]' : '';
+      return `- ${r.id}${tag} [${r.status}] at=${r.process_after || 'now'} ${r.recurrence ? `recur=${r.recurrence} ` : ''}→ ${prompt}`;
     });
 
     return ok(lines.join('\n'));

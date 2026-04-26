@@ -19,6 +19,7 @@ import { readContainerConfig, writeContainerConfig } from './container-config.js
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
+import { findSessionForAgent } from './db/sessions.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
@@ -254,6 +255,23 @@ function buildMounts(
   const globalDir = path.join(GROUPS_DIR, 'global');
   if (fs.existsSync(globalDir)) {
     mounts.push({ hostPath: globalDir, containerPath: '/workspace/global', readonly: true });
+  }
+
+  // Schedule-session inbound.db, read-only — gives the agent visibility
+  // into its long-lived scheduled tasks even from a per-thread chat session.
+  // Without this, list_tasks only sees the current session's tasks (always
+  // empty for fresh chat threads), making it look like the schedule was wiped.
+  // Skip this mount when the spawning session IS the schedule session
+  // (avoids self-mounting and is unnecessary — the main /workspace mount
+  // already exposes its own inbound.db).
+  if (session.thread_id !== 'schedule') {
+    const scheduleSession = findSessionForAgent(agentGroup.id, session.messaging_group_id ?? '', 'schedule');
+    if (scheduleSession) {
+      const schedDb = path.join(sessionDir(agentGroup.id, scheduleSession.id), 'inbound.db');
+      if (fs.existsSync(schedDb)) {
+        mounts.push({ hostPath: schedDb, containerPath: '/workspace/schedule.inbound.db', readonly: true });
+      }
+    }
   }
 
   // Shared CLAUDE.md — read-only, imported by the composed entry point via
