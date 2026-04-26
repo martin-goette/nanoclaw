@@ -1,0 +1,12 @@
+# Force text treatment for source so git renders diffs even when files
+# include enough non-ASCII bytes (arrows, em-dashes, etc.) to trip the
+# text/binary heuristic. Without this, files that mix code and Unicode
+# get displayed as `Bin N -> M bytes` and changes are hard to review.
+*.ts        text
+*.tsx       text
+*.js        text
+*.json      text
+*.md        text
+*.yml       text
+*.yaml      text
+*.sh        text eol=lf
