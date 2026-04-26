@@ -1,0 +1,240 @@
+name: Sync upstream & merge-forward feature branches
+
+# Pulls upstream qwibitai/nanoclaw into this fork's main, then merges main
+# forward into each feature branch (channels, providers, modules, skill/*).
+# All pushes target ORIGIN ONLY (this fork). Upstream is fetch-only.
+#
+# Safety invariants:
+#   - This workflow MUST NEVER push to qwibitai/* or open PRs against it.
+#     The first job step asserts that origin is not qwibitai-owned and that
+#     upstream is the only remote pointing to qwibitai. If either changes,
+#     the workflow fails before any git operation.
+#   - The workflow is gated to non-qwibitai repos via `if: github.repository`.
+#   - Issues are created on this fork, not upstream.
+
+on:
+  repository_dispatch:
+    types: [upstream-main-updated]
+  schedule:
+    - cron: '0 */6 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: true
+
+jobs:
+  sync-and-merge:
+    if: github.repository != 'qwibitai/nanoclaw'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Assert remote topology — origin is fork, not qwibitai
+        run: |
+          set -euo pipefail
+          ORIGIN_URL=$(git remote get-url origin)
+          echo "origin URL: $ORIGIN_URL"
+          if echo "$ORIGIN_URL" | grep -qi 'qwibitai'; then
+            echo "::error::Origin remote points to qwibitai. This workflow must only push to a fork. Aborting."
+            exit 1
+          fi
+
+      - name: Sync with upstream main (fetch only)
+        id: sync
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/qwibitai/nanoclaw.git
+          # Block accidental push to upstream from this runner.
+          git remote set-url --push upstream "do-not-push://qwibitai-blocked"
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date with upstream main."
+            echo "synced=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git merge upstream/main --no-edit; then
+            echo "::error::Merge conflict pulling upstream/main into fork main."
+            git merge --abort
+            echo "synced=false" >> "$GITHUB_OUTPUT"
+            echo "sync_failed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pnpm install --frozen-lockfile
+          if ! pnpm run build; then
+            echo "::error::Build failed after merging upstream/main."
+            git reset --hard "origin/main"
+            echo "synced=false" >> "$GITHUB_OUTPUT"
+            echo "sync_failed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! pnpm test 2>/dev/null; then
+            echo "::error::Tests failed after merging upstream/main."
+            git reset --hard "origin/main"
+            echo "synced=false" >> "$GITHUB_OUTPUT"
+            echo "sync_failed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Push to ORIGIN only.
+          git push origin main
+          echo "synced=true" >> "$GITHUB_OUTPUT"
+
+      - name: Merge main into feature branches
+        id: merge
+        run: |
+          set -euo pipefail
+          git fetch origin
+
+          FAILED=""
+          SUCCEEDED=""
+
+          # v2 branch families: top-level architectural branches + skill/*.
+          # We DO NOT touch upstream-only branches (e.g. v2, feat/*, fix/*).
+          BRANCHES=$(
+            git branch -r --list \
+              'origin/channels' \
+              'origin/providers' \
+              'origin/modules' \
+              'origin/skill/*' \
+              | sed 's|origin/||' | xargs
+          )
+
+          if [ -z "$BRANCHES" ]; then
+            echo "No feature branches to merge-forward."
+            exit 0
+          fi
+
+          for BRANCH in $BRANCHES; do
+            NAME=$(echo "$BRANCH" | sed 's|skill/|skill:|')
+            echo ""
+            echo "=== Processing $BRANCH ==="
+
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+
+            if ! git merge main --no-edit; then
+              echo "::warning::Merge conflict in $BRANCH"
+              git merge --abort
+              FAILED="$FAILED $NAME"
+              continue
+            fi
+
+            if git diff --quiet "origin/$BRANCH"; then
+              echo "$BRANCH already up to date."
+              SUCCEEDED="$SUCCEEDED $NAME"
+              continue
+            fi
+
+            pnpm install --frozen-lockfile
+
+            if ! pnpm run build; then
+              echo "::warning::Build failed for $BRANCH"
+              git reset --hard "origin/$BRANCH"
+              FAILED="$FAILED $NAME"
+              continue
+            fi
+
+            if ! pnpm test 2>/dev/null; then
+              echo "::warning::Tests failed for $BRANCH"
+              git reset --hard "origin/$BRANCH"
+              FAILED="$FAILED $NAME"
+              continue
+            fi
+
+            # Push to ORIGIN only.
+            git push origin "$BRANCH"
+            SUCCEEDED="$SUCCEEDED $NAME"
+            echo "$BRANCH merged and pushed."
+          done
+
+          echo ""
+          echo "=== Results ==="
+          echo "Succeeded: $SUCCEEDED"
+          echo "Failed: $FAILED"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+          echo "succeeded=$SUCCEEDED" >> "$GITHUB_OUTPUT"
+
+      - name: Open issue on this fork — upstream sync failure
+        if: steps.sync.outputs.sync_failed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Upstream sync failed — merge conflict or build failure',
+              body: [
+                'Automated sync with `qwibitai/nanoclaw` main failed.',
+                '',
+                'Resolve manually:',
+                '```bash',
+                'git fetch upstream main',
+                'git merge upstream/main',
+                '# resolve conflicts',
+                'pnpm run build && pnpm test',
+                'git push origin main',
+                '```',
+              ].join('\n'),
+              labels: ['upstream-sync']
+            });
+
+      - name: Open issue on this fork — feature branch merge failures
+        if: steps.merge.outputs.failed != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const failed = '${{ steps.merge.outputs.failed }}'.trim().split(/\s+/);
+            const body = [
+              'The merge-forward workflow failed to merge `main` into the following branches:',
+              '',
+              ...failed.map(s => `- \`${s.replace(/^skill:/, 'skill/')}\`: merge conflict, build failure, or test failure`),
+              '',
+              'Resolve manually:',
+              '```bash',
+              ...failed.map(s => {
+                const branch = s.replace(/^skill:/, 'skill/');
+                return `git checkout ${branch} && git merge main && git push origin ${branch}`;
+              }),
+              '```',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Merge-forward failed for ${failed.length} branch(es)`,
+              body,
+              labels: ['fork-sync']
+            });

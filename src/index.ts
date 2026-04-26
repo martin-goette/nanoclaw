@@ -12,6 +12,8 @@ import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
+import { startAttachmentCleanup, stopAttachmentCleanup } from './attachment-cleanup.js';
+import { startCredentialRefresher, stopCredentialRefresher } from './credential-refresh.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
 import { log } from './log.js';
@@ -158,6 +160,13 @@ async function main(): Promise<void> {
   startHostSweep();
   log.info('Host sweep started');
 
+  // 7. Proactive OAuth credential refresh (writes back in-place to preserve
+  // Docker bind-mount inode so running containers pick up new tokens).
+  startCredentialRefresher();
+
+  // 8. Daily prune of Slack inbound attachments older than 30 days.
+  startAttachmentCleanup();
+
   log.info('NanoClaw running');
 }
 
@@ -173,6 +182,8 @@ async function shutdown(signal: string): Promise<void> {
   }
   stopDeliveryPolls();
   stopHostSweep();
+  stopCredentialRefresher();
+  stopAttachmentCleanup();
   await teardownChannelAdapters();
   process.exit(0);
 }

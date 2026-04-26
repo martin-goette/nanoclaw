@@ -10,6 +10,11 @@ import path from 'path';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import { CONTAINER_IMAGE, DATA_DIR, GROUPS_DIR, ONECLI_API_KEY, ONECLI_URL, TIMEZONE } from './config.js';
+import { readEnvFile } from './env.js';
+
+function readOpenAiEnv(): Record<string, string> {
+  return readEnvFile(['OPENAI_API_KEY', 'TRANSCRIPTION_MODEL']);
+}
 import { readContainerConfig, writeContainerConfig } from './container-config.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
@@ -109,7 +114,8 @@ async function spawnContainer(session: Session): Promise<void> {
   const containerName = `nanoclaw-v2-${agentGroup.folder}-${Date.now()}`;
   // OneCLI agent identifier is always the agent group id — stable across
   // sessions and reversible via getAgentGroup() for approval routing.
-  const agentIdentifier = agentGroup.id;
+  // OneCLI rejects underscores; convert ag_<hex> -> ag-<hex>.
+  const agentIdentifier = agentGroup.id.replace(/_/g, '-');
   const args = await buildContainerArgs(
     mounts,
     containerName,
@@ -121,8 +127,11 @@ async function spawnContainer(session: Session): Promise<void> {
   );
 
   log.info('Spawning container', { sessionId: session.id, agentGroup: agentGroup.name, containerName });
+  log.info('docker args', { bin: CONTAINER_RUNTIME_BIN, args });
 
   const container = spawn(CONTAINER_RUNTIME_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  container.on('error', (err) => log.error('container spawn error', { err: err.message, sessionId: session.id }));
 
   activeContainers.set(session.id, { process: container, containerName });
   markContainerRunning(session.id);
@@ -130,7 +139,7 @@ async function spawnContainer(session: Session): Promise<void> {
   // Log stderr
   container.stderr?.on('data', (data) => {
     for (const line of data.toString().trim().split('\n')) {
-      if (line) log.debug(line, { container: agentGroup.folder });
+      if (line) log.info('container stderr', { container: agentGroup.folder, line });
     }
   });
 
@@ -257,6 +266,14 @@ function buildMounts(
   // Per-group .claude-shared at /home/node/.claude (Claude state, settings,
   // skill symlinks)
   mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
+
+  // Mount host ~/.claude/.credentials.json into container so SDK uses Max OAuth.
+  // Single-file rw bind-mount; refresh-write-back propagates because both
+  // resolve to the same host inode. Same behavior as v1.
+  const hostCredsFile = path.join(process.env.HOME || '/home/node', '.claude', '.credentials.json');
+  if (fs.existsSync(hostCredsFile)) {
+    mounts.push({ hostPath: hostCredsFile, containerPath: '/home/node/.claude/.credentials.json', readonly: false });
+  }
 
   // Shared agent-runner source — read-only, same code for all groups.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
@@ -387,6 +404,18 @@ async function buildContainerArgs(
   // Everything NanoClaw-specific is in container.json (read by runner at startup).
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Pass OPENAI credentials so the in-container transcribe_audio MCP tool
+  // can reach OpenAI Whisper / gpt-4o-mini-transcribe. Slack-side inbound
+  // transcription runs on the host and reads the same .env independently.
+  // (v2 deliberately keeps secrets out of process.env, so we read .env here.)
+  const openaiEnv = readOpenAiEnv();
+  if (openaiEnv.OPENAI_API_KEY) {
+    args.push('-e', `OPENAI_API_KEY=${openaiEnv.OPENAI_API_KEY}`);
+  }
+  if (openaiEnv.TRANSCRIPTION_MODEL) {
+    args.push('-e', `TRANSCRIPTION_MODEL=${openaiEnv.TRANSCRIPTION_MODEL}`);
+  }
+
   // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
   if (providerContribution.env) {
     for (const [key, value] of Object.entries(providerContribution.env)) {
@@ -396,18 +425,28 @@ async function buildContainerArgs(
 
   // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
   // are routed through the agent vault for credential injection.
-  try {
-    if (agentIdentifier) {
-      await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+  // Skipped when host Max-OAuth credentials are mounted into the container
+  // (the SDK uses those directly; the proxy at host.docker.internal:10255
+  // isn't reachable from agent containers because OneCLI's port mapping
+  // is loopback-only).
+  const hostCredsFile = path.join(process.env.HOME || '/home/node', '.claude', '.credentials.json');
+  const hasMaxOAuth = fs.existsSync(hostCredsFile);
+  if (hasMaxOAuth) {
+    log.info('OneCLI gateway skipped — using mounted Max OAuth credentials', { containerName });
+  } else {
+    try {
+      if (agentIdentifier) {
+        await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+      }
+      const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
+      if (onecliApplied) {
+        log.info('OneCLI gateway applied', { containerName });
+      } else {
+        log.warn('OneCLI gateway not applied — container will have no credentials', { containerName });
+      }
+    } catch (err) {
+      log.warn('OneCLI gateway error — container will have no credentials', { containerName, err });
     }
-    const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-    if (onecliApplied) {
-      log.info('OneCLI gateway applied', { containerName });
-    } else {
-      log.warn('OneCLI gateway not applied — container will have no credentials', { containerName });
-    }
-  } catch (err) {
-    log.warn('OneCLI gateway error — container will have no credentials', { containerName, err });
   }
 
   // Host gateway
