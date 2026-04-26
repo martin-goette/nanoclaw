@@ -25,6 +25,8 @@ export interface ProviderOptions {
   mcpServers?: Record<string, McpServerConfig>;
   env?: Record<string, string | undefined>;
   additionalDirectories?: string[];
+  /** SDK model id override (e.g. 'claude-opus-4-7'). Provider-specific. */
+  model?: string;
 }
 
 export interface QueryInput {
