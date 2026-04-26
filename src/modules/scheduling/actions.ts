@@ -72,7 +72,11 @@ export async function handleCancelTask(
   if (touched === 0) {
     const sched = openScheduleInboundIfDifferent(session);
     if (sched) {
-      try { touched = cancelTask(sched, taskId); } finally { sched.close(); }
+      try {
+        touched = cancelTask(sched, taskId);
+      } finally {
+        sched.close();
+      }
       if (touched > 0) log.info('Task cancelled in schedule session', { taskId });
     }
   }
@@ -89,7 +93,11 @@ export async function handlePauseTask(
   if (touched === 0) {
     const sched = openScheduleInboundIfDifferent(session);
     if (sched) {
-      try { touched = pauseTask(sched, taskId); } finally { sched.close(); }
+      try {
+        touched = pauseTask(sched, taskId);
+      } finally {
+        sched.close();
+      }
       if (touched > 0) log.info('Task paused in schedule session', { taskId });
     }
   }
@@ -106,7 +114,11 @@ export async function handleResumeTask(
   if (touched === 0) {
     const sched = openScheduleInboundIfDifferent(session);
     if (sched) {
-      try { touched = resumeTask(sched, taskId); } finally { sched.close(); }
+      try {
+        touched = resumeTask(sched, taskId);
+      } finally {
+        sched.close();
+      }
       if (touched > 0) log.info('Task resumed in schedule session', { taskId });
     }
   }
@@ -132,7 +144,11 @@ export async function handleUpdateTask(
   if (touched === 0) {
     const sched = openScheduleInboundIfDifferent(session);
     if (sched) {
-      try { touched = updateTask(sched, taskId, update); } finally { sched.close(); }
+      try {
+        touched = updateTask(sched, taskId, update);
+      } finally {
+        sched.close();
+      }
       if (touched > 0) log.info('Task updated in schedule session', { taskId, fields: Object.keys(update) });
     }
   }
